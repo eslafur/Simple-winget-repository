@@ -51,8 +51,9 @@ Repository{% endblock %}
     </div>
 
     <div class="form-row">
-      <label for="upload">Installer file (optional)</label>
-      <input id="upload" name="upload" type="file" />
+      <label for="upload">Installer file</label>
+      <input id="upload" name="upload" type="file" required />
+      <p class="hint">Uploading a setup file is mandatory for a new version.</p>
     </div>
 
     <div class="form-row">

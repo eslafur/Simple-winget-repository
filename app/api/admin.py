@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
+import hashlib
 
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -33,6 +34,27 @@ def _get_version_or_404(package_id: str, version: str) -> VersionMetadata:
         if v.version == version:
             return v
     raise HTTPException(status_code=404, detail="Version not found")
+
+
+async def _save_upload_and_hash(upload: UploadFile, target_dir: Path) -> tuple[str, str]:
+    """
+    Save an uploaded installer file into the given directory and return
+    (filename, sha256_hex).
+    """
+    target_dir.mkdir(parents=True, exist_ok=True)
+    filename = upload.filename
+    path = target_dir / filename
+
+    hasher = hashlib.sha256()
+    with path.open("wb") as f:
+        while True:
+            chunk = await upload.read(8192)
+            if not chunk:
+                break
+            f.write(chunk)
+            hasher.update(chunk)
+
+    return filename, hasher.hexdigest()
 
 
 @router.get("/admin/packages", response_class=HTMLResponse)
@@ -232,9 +254,9 @@ async def admin_create_version(
     silent_arguments: str = Form(""),
     interactive_arguments: str = Form(""),
     log_arguments: str = Form(""),
-    upload: UploadFile | None = File(
-        default=None,
-        description="Optional installer file for this version.",
+    upload: UploadFile = File(
+        ...,
+        description="Installer file for this version.",
     ),
 ) -> RedirectResponse:
     """
@@ -250,12 +272,11 @@ async def admin_create_version(
     version_dir.mkdir(parents=True, exist_ok=True)
 
     installer_file_name: Optional[str] = None
-    if upload is not None:
-        installer_file_name = upload.filename
-        installer_path = version_dir / installer_file_name
-        with installer_path.open("wb") as f:
-            contents = await upload.read()
-            f.write(contents)
+    installer_sha256: Optional[str] = None
+    # Upload is mandatory here by design.
+    installer_file_name, installer_sha256 = await _save_upload_and_hash(
+        upload, version_dir
+    )
 
     meta = VersionMetadata(
         version=version,
@@ -263,7 +284,7 @@ async def admin_create_version(
         scope=scope,
         installer_type=installer_type,
         installer_file=installer_file_name,
-        installer_sha256=None,
+        installer_sha256=installer_sha256,
         silent_arguments=silent_arguments or None,
         interactive_arguments=interactive_arguments or None,
         log_arguments=log_arguments or None,
@@ -313,7 +334,6 @@ async def admin_update_version(
     architecture: str = Form(...),
     scope: str = Form(...),
     installer_type: str = Form("exe"),
-    installer_file: str = Form(""),
     silent_arguments: str = Form(""),
     interactive_arguments: str = Form(""),
     log_arguments: str = Form(""),
@@ -338,13 +358,20 @@ async def admin_update_version(
     version_dir.mkdir(parents=True, exist_ok=True)
 
     # Handle optional new installer upload.
-    installer_file_name = installer_file or v.installer_file
+    installer_file_name = v.installer_file
+    installer_sha256 = v.installer_sha256
+
     if upload is not None:
-        installer_file_name = upload.filename
-        installer_path = version_dir / installer_file_name
-        with installer_path.open("wb") as f:
-            contents = await upload.read()
-            f.write(contents)
+        # New file uploaded: save it and compute a fresh checksum.
+        old_name = v.installer_file
+        installer_file_name, installer_sha256 = await _save_upload_and_hash(
+            upload, version_dir
+        )
+        # If the new file has a different name, clean up the old installer.
+        if old_name and old_name != installer_file_name:
+            old_path = version_dir / old_name
+            if old_path.is_file():
+                old_path.unlink()
 
     version_json = version_dir / "version.json"
 
@@ -354,7 +381,7 @@ async def admin_update_version(
         scope=scope,
         installer_type=installer_type,
         installer_file=installer_file_name,
-        installer_sha256=v.installer_sha256,
+        installer_sha256=installer_sha256,
         silent_arguments=silent_arguments or None,
         interactive_arguments=interactive_arguments or None,
         log_arguments=log_arguments or None,
@@ -379,9 +406,9 @@ async def admin_clone_version(
     package_id: str,
     version: str,
     new_version: str = Form(..., description="New version identifier."),
-    upload: UploadFile | None = File(
-        default=None,
-        description="Optional new installer file for the cloned version.",
+    upload: UploadFile = File(
+        ...,
+        description="Installer file for the cloned version.",
     ),
 ) -> RedirectResponse:
     """
@@ -406,13 +433,12 @@ async def admin_clone_version(
     new_version_dir = package_dir / new_dir_name
     new_version_dir.mkdir(parents=True, exist_ok=True)
 
-    installer_file_name: Optional[str] = source.installer_file
-    if upload is not None:
-        installer_file_name = upload.filename
-        installer_path = new_version_dir / installer_file_name
-        with installer_path.open("wb") as f:
-            contents = await upload.read()
-            f.write(contents)
+    installer_file_name: Optional[str] = None
+    installer_sha256: Optional[str] = None
+    # Upload is mandatory for cloned versions as well.
+    installer_file_name, installer_sha256 = await _save_upload_and_hash(
+        upload, new_version_dir
+    )
 
     new_meta = VersionMetadata(
         version=new_version,
@@ -420,7 +446,7 @@ async def admin_clone_version(
         scope=source.scope,
         installer_type=source.installer_type,
         installer_file=installer_file_name,
-        installer_sha256=None,  # Recalculate separately if desired.
+        installer_sha256=installer_sha256,
         silent_arguments=source.silent_arguments,
         interactive_arguments=source.interactive_arguments,
         log_arguments=source.log_arguments,

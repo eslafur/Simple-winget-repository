@@ -62,13 +62,13 @@ Repository{% endblock %}
       <label for="installer_file">Installer file name</label>
       <input
         id="installer_file"
-        name="installer_file"
         type="text"
         value="{{ version_meta.installer_file or '' }}"
+        readonly
       />
       <p class="hint">
-        The file should live next to <code>version.json</code> in the version
-        directory.
+        The file lives next to <code>version.json</code> in the version
+        directory. To change it, upload a new installer below.
       </p>
     </div>
 
