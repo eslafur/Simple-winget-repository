@@ -1,0 +1,43 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: Debug main.py (FastAPI)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/app/main.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true,
+      "preLaunchTask": "Install requirements",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "WINGET_REPO_DATA_DIR": "${workspaceFolder}/data"
+      }
+    },
+    {
+      "name": "Python: Debug FastAPI via uvicorn module",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "app.main:app",
+        "--reload",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true,
+      "preLaunchTask": "Install requirements",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "WINGET_REPO_DATA_DIR": "${workspaceFolder}/data"
+      }
+    }
+  ]
+}
+
+

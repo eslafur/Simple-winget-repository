@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Home | winget REST Repository{% endblock %}
+
+{% block content %}
+<section>
+  <h2>Welcome</h2>
+  <p>
+    This is a FastAPI-based prototype of a
+    <code>winget</code> REST repository.
+  </p>
+  <ul>
+    <li>Health check: <code>/health</code></li>
+    <li>Repository info: <code>/winget/information</code></li>
+    <li>OpenAPI docs: <code>/docs</code></li>
+  </ul>
+</section>
+{% endblock %}
+
+

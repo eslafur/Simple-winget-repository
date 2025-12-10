@@ -1,0 +1,13 @@
+{
+  "version": "1.0",
+  "architecture": "x86",
+  "scope": "user",
+  "installer_type": "exe",
+  "installer_file": "our-example-installer.exe",
+  "installer_sha256": null,
+  "silent_arguments": "/quiet",
+  "interactive_arguments": "/passive",
+  "log_arguments": "/log install.log",
+  "release_date": null,
+  "release_notes": null
+}

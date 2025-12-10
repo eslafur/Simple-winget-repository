@@ -1,0 +1,14 @@
+{
+  "package_identifier": "our.example",
+  "package_name": "Our Example App",
+  "publisher": "Example Publisher",
+  "short_description": "Example package used to document the repository layout.",
+  "license": "Freeware",
+  "tags": [
+    "example",
+    "documentation"
+  ],
+  "homepage": null,
+  "support_url": null,
+  "is_example": true
+}

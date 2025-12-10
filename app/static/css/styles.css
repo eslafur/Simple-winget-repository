@@ -1,0 +1,29 @@
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  background-color: #0f172a;
+  color: #e5e7eb;
+}
+
+.site-header,
+.site-footer {
+  background-color: #020617;
+  padding: 1rem 2rem;
+}
+
+.site-main {
+  padding: 2rem;
+}
+
+a {
+  color: #38bdf8;
+}
+
+code {
+  background-color: #020617;
+  padding: 0.1rem 0.25rem;
+  border-radius: 0.25rem;
+}
+
+

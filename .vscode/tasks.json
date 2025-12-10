@@ -1,0 +1,20 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Create venv (.venv)",
+      "type": "shell",
+      "command": "if (!(Test-Path '.venv')) { python -m venv .venv }",
+      "problemMatcher": []
+    },
+    {
+      "label": "Install requirements",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt",
+      "problemMatcher": [],
+      "dependsOn": "Create venv (.venv)"
+    }
+  ]
+}
+
+
