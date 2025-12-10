@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Admin – Packages | winget REST Repository{% endblock %}
+
+{% block content %}
+<section>
+  <h2>Packages</h2>
+  <p>All indexed packages. Click a row to edit metadata and manage versions.</p>
+
+  <div class="toolbar">
+    <a href="/admin/packages/new" class="button-primary">New package</a>
+  </div>
+
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Identifier</th>
+        <th>Name</th>
+        <th>Latest version</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for pkg in packages %}
+      <tr onclick="window.location.href='/admin/packages/{{ pkg.id }}'">
+        <td><code>{{ pkg.id }}</code></td>
+        <td>{{ pkg.name }}</td>
+        <td>{{ pkg.latest_version or "-" }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="3">No packages found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+
+

@@ -12,7 +12,7 @@ from .models import (
     RepositoryConfig,
     RepositoryIndex,
     VersionMetadata,
-)
+) 
 
 
 DATA_ROOT_ENV_VAR = "WINGET_REPO_DATA_DIR"
@@ -192,7 +192,6 @@ def build_index_from_disk() -> None:
         if not pkg_dir.is_dir():
             continue
 
-        package_id = pkg_dir.name
         package_json = pkg_dir / "package.json"
 
         if not package_json.exists():
@@ -206,11 +205,19 @@ def build_index_from_disk() -> None:
             # Skip malformed packages for now.
             continue
 
+        # Use the package identifier from metadata as the logical key.
+        # The on-disk folder name is treated as an implementation detail.
+        package_id = pkg_meta.package_identifier
+
         # Skip the example package entirely when building the index.
         if package_id == EXAMPLE_PACKAGE_ID or pkg_meta.is_example:
             continue
 
-        package_index = PackageIndex(package=pkg_meta, versions=[])
+        package_index = PackageIndex(
+            package=pkg_meta,
+            versions=[],
+            storage_path=str(pkg_dir.relative_to(data_dir)),
+        )
 
         # Traverse version folders directly under the package directory.
         # Expected convention: "<version>-<architecture>-<scope>", e.g. "1.0-x86-user".
@@ -237,20 +244,31 @@ def build_index_from_disk() -> None:
             if len(parts) == 3:
                 folder_version, folder_arch, folder_scope = parts
 
+            # If the JSON is missing core fields, fall back to the folder hints.
+            # We intentionally only *fill in* missing values instead of overriding
+            # anything that is already present in the JSON.
+            if "version" not in raw and folder_version is not None:
+                raw["version"] = folder_version
+            if "architecture" not in raw and folder_arch is not None:
+                raw["architecture"] = folder_arch
+            if "scope" not in raw and folder_scope is not None:
+                raw["scope"] = folder_scope
+
             try:
-                version_meta = VersionMetadata(
-                    **raw,
-                    version=raw.get("version", folder_version or "0.0.0"),
-                    architecture=raw.get("architecture", folder_arch or "unknown"),
-                    scope=raw.get("scope", folder_scope or "user"),
-                )
+                version_meta = VersionMetadata(**raw)
             except Exception:
                 continue
 
+            # Record where this version lives on disk relative to the data directory
+            # so that APIs can construct paths to installer files, logs, etc.
+            version_meta.storage_path = str(version_dir.relative_to(data_dir))
+
             package_index.versions.append(version_meta)
 
-        if package_index.versions:
-            index.packages[package_id] = package_index
+        # Always include the package in the index, even if it currently has
+        # no versions. This is important for the admin UI, which needs to
+        # manage packages before any versions are created.
+        index.packages[package_id] = package_index
 
     index.last_built_at = get_repository_config().created_at if index.last_built_at is None else index.last_built_at
     _repository_index = index

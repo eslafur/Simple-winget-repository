@@ -59,6 +59,14 @@ except ImportError:
     # During very early scaffolding, the router may not exist yet.
     pass
 
+# Admin UI routes (HTML tooling for managing packages/versions)
+try:
+    from app.api.admin import router as admin_router
+
+    app.include_router(admin_router, tags=["admin"])
+except ImportError:
+    pass
+
 
 if __name__ == "__main__":
     """

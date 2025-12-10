@@ -59,7 +59,7 @@ class PackageCommonMetadata(BaseModel):
 class VersionMetadata(BaseModel):
     """
     Information that is specific to a concrete version/architecture/scope.
-    Persisted in: <DATA_DIR>/<package_id>/<arch>/<scope>/<version>/version.json
+    Persisted in: <DATA_DIR>/<package_id>/<version-arch-scope>/version.json
     """
 
     version: str
@@ -79,6 +79,15 @@ class VersionMetadata(BaseModel):
     release_date: Optional[datetime] = None
     release_notes: Optional[str] = None
 
+    # Relative path from the data directory to the folder containing this version's files.
+    # This is populated by the indexer and excluded from JSON persistence so the on-disk
+    # layout remains clean and focused on winget metadata.
+    storage_path: Optional[str] = Field(
+        default=None,
+        exclude=True,
+        description="Relative path to this version directory from the data directory.",
+    )
+
 
 class PackageIndex(BaseModel):
     """
@@ -87,6 +96,12 @@ class PackageIndex(BaseModel):
 
     package: PackageCommonMetadata
     versions: List[VersionMetadata] = Field(default_factory=list)
+    # Optional: where this package is stored on disk relative to the data directory.
+    # This makes the on-disk folder layout a detail instead of the logical key.
+    storage_path: Optional[str] = Field(
+        default=None,
+        description="Relative path from the data directory to this package's folder.",
+    )
 
 
 class RepositoryIndex(BaseModel):

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}Admin – {{ package_id }} | winget REST Repository{% endblock %}
+
+{% block content %}
+<section>
+  <h2>Package: <code>{{ package_id }}</code></h2>
+
+  <h3>Metadata</h3>
+  <form method="post" action="/admin/packages/{{ package_id }}" class="form">
+    <div class="form-row">
+      <label for="package_name">Name</label>
+      <input
+        id="package_name"
+        name="package_name"
+        type="text"
+        value="{{ package.package_name }}"
+        required
+      />
+    </div>
+
+    <div class="form-row">
+      <label for="publisher">Publisher</label>
+      <input
+        id="publisher"
+        name="publisher"
+        type="text"
+        value="{{ package.publisher }}"
+        required
+      />
+    </div>
+
+    <div class="form-row">
+      <label for="short_description">Short description</label>
+      <textarea
+        id="short_description"
+        name="short_description"
+        rows="2"
+      >{{ package.short_description or "" }}</textarea>
+    </div>
+
+    <div class="form-row">
+      <label for="license">License</label>
+      <input
+        id="license"
+        name="license"
+        type="text"
+        value="{{ package.license or "" }}"
+      />
+    </div>
+
+    <div class="form-row">
+      <label for="tags">Tags (comma separated)</label>
+      <input
+        id="tags"
+        name="tags"
+        type="text"
+        value="{{ package.tags | join(', ') }}"
+      />
+    </div>
+
+    <div class="form-actions">
+      <button type="submit">Save metadata</button>
+      <a href="/admin/packages" class="button-secondary">Back to list</a>
+    </div>
+  </form>
+</section>
+
+<section>
+  <h3>Versions</h3>
+
+  <div class="toolbar">
+    <a
+      href="/admin/packages/{{ package_id }}/versions/new"
+      class="button-primary"
+      >New version</a
+    >
+  </div>
+
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Version</th>
+        <th>Architecture</th>
+        <th>Scope</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for v in versions %}
+      <tr>
+        <td>
+          <a href="/admin/packages/{{ package_id }}/versions/{{ v.version }}"
+            >{{ v.version }}</a
+          >
+        </td>
+        <td>{{ v.architecture }}</td>
+        <td>{{ v.scope }}</td>
+        <td>
+          <form
+            method="post"
+            action="/admin/packages/{{ package_id }}/versions/{{ v.version }}/clone"
+            style="display: inline"
+            enctype="multipart/form-data"
+          >
+            <input
+              type="text"
+              name="new_version"
+              placeholder="New version"
+              required
+            />
+            <input
+              type="file"
+              name="upload"
+              style="max-width: 14rem"
+            />
+            <button type="submit">Update version…</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="4">No versions found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+
+
