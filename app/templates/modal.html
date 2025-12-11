@@ -9,6 +9,12 @@
     <div class="modal-body" id="modal-body">
       <!-- Content loaded via AJAX -->
     </div>
+    <div id="upload-progress-container" class="upload-progress-container hidden">
+      <div class="upload-progress-bar">
+        <div id="upload-progress-fill" class="upload-progress-fill"></div>
+      </div>
+      <div id="upload-progress-text" class="upload-progress-text">0%</div>
+    </div>
     <div class="modal-footer">
       <button type="button" id="modal-submit" class="button-primary" onclick="submitModal()">Submit</button>
       <button type="button" id="modal-close" class="button-secondary" onclick="closeModal()">Close</button>
@@ -61,9 +67,13 @@ function openModal(title, fragmentUrl, submitEndpoint, closeAction = 'close') {
 function closeModal() {
   const modal = document.getElementById('modal');
   const closeAction = modal.getAttribute('data-close-action');
+  const progressContainer = document.getElementById('upload-progress-container');
   
   modal.classList.add('hidden');
   currentForm = null;
+  if (progressContainer) {
+    progressContainer.classList.add('hidden');
+  }
   
   if (closeAction === 'reload') {
     window.location.reload();
@@ -79,6 +89,9 @@ async function submitModal() {
   const modal = document.getElementById('modal');
   const submitEndpoint = modal.getAttribute('data-submit-endpoint');
   const submitButton = document.getElementById('modal-submit');
+  const progressContainer = document.getElementById('upload-progress-container');
+  const progressFill = document.getElementById('upload-progress-fill');
+  const progressText = document.getElementById('upload-progress-text');
   
   if (!submitEndpoint) {
     // Try to submit the form directly if it has its own handler
@@ -92,34 +105,101 @@ async function submitModal() {
   }
   
   const formData = new FormData(currentForm);
+  
+  // Check if there's a file upload
+  const fileInput = currentForm.querySelector('input[type="file"]');
+  const hasFile = fileInput && fileInput.files && fileInput.files.length > 0;
+  
   const originalText = submitButton.textContent;
   submitButton.disabled = true;
   submitButton.textContent = 'Saving...';
   
+  // Show progress bar if file upload
+  if (hasFile && progressContainer && progressFill && progressText) {
+    progressContainer.classList.remove('hidden');
+    progressFill.style.width = '0%';
+    progressText.textContent = '0%';
+  }
+  
   try {
-    const res = await fetch(submitEndpoint, {
-      method: 'POST',
-      body: formData,
-    });
-    
-    const data = await res.json();
-    
-    if (res.ok && data.success) {
-      closeModal();
-      // Reload if configured
-      if (modal.getAttribute('data-close-action') === 'reload') {
-        window.location.reload();
-      }
+    // Use XMLHttpRequest for file uploads to track progress
+    if (hasFile) {
+      await submitWithProgress(submitEndpoint, formData, progressFill, progressText);
     } else {
-      alert(data.error || 'Failed to save');
-      submitButton.disabled = false;
-      submitButton.textContent = originalText;
+      // Use fetch for non-file uploads
+      const res = await fetch(submitEndpoint, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to save');
+      }
+    }
+    
+    // Success - close modal and reload if needed
+    if (progressContainer) {
+      progressContainer.classList.add('hidden');
+    }
+    closeModal();
+    if (modal.getAttribute('data-close-action') === 'reload') {
+      window.location.reload();
     }
   } catch (error) {
     alert(`Error: ${error.message}`);
     submitButton.disabled = false;
     submitButton.textContent = originalText;
+    if (progressContainer) {
+      progressContainer.classList.add('hidden');
+    }
   }
+}
+
+function submitWithProgress(endpoint, formData, progressFill, progressText) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable) {
+        const percentComplete = (e.loaded / e.total) * 100;
+        const rounded = Math.round(percentComplete);
+        progressFill.style.width = percentComplete + '%';
+        progressText.textContent = rounded + '%';
+      }
+    });
+    
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (data.success) {
+            progressFill.style.width = '100%';
+            progressText.textContent = '100%';
+            resolve(data);
+          } else {
+            reject(new Error(data.error || 'Failed to save'));
+          }
+        } catch (e) {
+          reject(new Error('Invalid response from server'));
+        }
+      } else {
+        reject(new Error(`Server error: ${xhr.status}`));
+      }
+    });
+    
+    xhr.addEventListener('error', () => {
+      reject(new Error('Network error occurred'));
+    });
+    
+    xhr.addEventListener('abort', () => {
+      reject(new Error('Upload cancelled'));
+    });
+    
+    xhr.open('POST', endpoint);
+    xhr.send(formData);
+  });
 }
 </script>
 
