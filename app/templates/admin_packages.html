@@ -4,12 +4,11 @@
 
 {% block content %}
 <section>
-  <h2>Packages</h2>
-  <p>All indexed packages. Click a row to edit metadata and manage versions.</p>
-
-  <div class="toolbar">
-    <a href="/admin/packages/new" class="button-primary">New package</a>
-  </div>
+  <h2>
+    Packages
+    <button onclick="openNewPackageModal()" class="button-add" title="Add new package">+</button>
+  </h2>
+  <p>All indexed packages. Click a row to view and manage versions.</p>
 
   <table class="table">
     <thead>
@@ -34,6 +33,19 @@
     </tbody>
   </table>
 </section>
+
+{% include "modal.html" %}
+
+<script>
+function openNewPackageModal() {
+  openModal(
+    'New Package',
+    '/admin/packages/new/fragment',
+    '/admin/packages/new',
+    'reload'
+  );
+}
+</script>
 {% endblock %}
 
 

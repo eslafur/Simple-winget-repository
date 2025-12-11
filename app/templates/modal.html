@@ -1,0 +1,125 @@
+<!-- Generalized Modal Component -->
+<div id="modal" class="modal hidden" data-submit-endpoint="" data-close-action="close">
+  <div class="modal-backdrop" onclick="closeModal()"></div>
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="modal-title">Modal</h3>
+      <button onclick="closeModal()" class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="modal-body">
+      <!-- Content loaded via AJAX -->
+    </div>
+    <div class="modal-footer">
+      <button type="button" id="modal-submit" class="button-primary" onclick="submitModal()">Submit</button>
+      <button type="button" id="modal-close" class="button-secondary" onclick="closeModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentForm = null;
+
+function openModal(title, fragmentUrl, submitEndpoint, closeAction = 'close') {
+  const modal = document.getElementById('modal');
+  const modalBody = document.getElementById('modal-body');
+  const modalTitle = document.getElementById('modal-title');
+  const modalSubmit = document.getElementById('modal-submit');
+  
+  modalTitle.textContent = title;
+  modal.setAttribute('data-submit-endpoint', submitEndpoint || '');
+  modal.setAttribute('data-close-action', closeAction);
+  modalBody.innerHTML = '<p>Loading...</p>';
+  modal.classList.remove('hidden');
+  
+  // Hide submit button initially, will be shown when form loads
+  modalSubmit.style.display = 'none';
+  
+  fetch(fragmentUrl)
+    .then(res => res.text())
+    .then(html => {
+      modalBody.innerHTML = html;
+      // Find the form in the loaded content
+      currentForm = modalBody.querySelector('form');
+      if (currentForm) {
+        // Show submit button if form exists
+        modalSubmit.style.display = 'inline-block';
+        // Update submit button text from form if available
+        const formSubmit = currentForm.querySelector('button[type="submit"]');
+        if (formSubmit) {
+          modalSubmit.textContent = formSubmit.textContent || 'Submit';
+        }
+      } else {
+        modalSubmit.style.display = 'none';
+      }
+    })
+    .catch(error => {
+      modalBody.innerHTML = `<p class="error">Error loading form: ${error.message}</p>`;
+      modalSubmit.style.display = 'none';
+    });
+}
+
+function closeModal() {
+  const modal = document.getElementById('modal');
+  const closeAction = modal.getAttribute('data-close-action');
+  
+  modal.classList.add('hidden');
+  currentForm = null;
+  
+  if (closeAction === 'reload') {
+    window.location.reload();
+  }
+}
+
+async function submitModal() {
+  if (!currentForm) {
+    alert('No form to submit');
+    return;
+  }
+  
+  const modal = document.getElementById('modal');
+  const submitEndpoint = modal.getAttribute('data-submit-endpoint');
+  const submitButton = document.getElementById('modal-submit');
+  
+  if (!submitEndpoint) {
+    // Try to submit the form directly if it has its own handler
+    const formSubmit = currentForm.querySelector('button[type="submit"]');
+    if (formSubmit) {
+      formSubmit.click();
+      return;
+    }
+    alert('No submit endpoint configured');
+    return;
+  }
+  
+  const formData = new FormData(currentForm);
+  const originalText = submitButton.textContent;
+  submitButton.disabled = true;
+  submitButton.textContent = 'Saving...';
+  
+  try {
+    const res = await fetch(submitEndpoint, {
+      method: 'POST',
+      body: formData,
+    });
+    
+    const data = await res.json();
+    
+    if (res.ok && data.success) {
+      closeModal();
+      // Reload if configured
+      if (modal.getAttribute('data-close-action') === 'reload') {
+        window.location.reload();
+      }
+    } else {
+      alert(data.error || 'Failed to save');
+      submitButton.disabled = false;
+      submitButton.textContent = originalText;
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+    submitButton.disabled = false;
+    submitButton.textContent = originalText;
+  }
+}
+</script>
+

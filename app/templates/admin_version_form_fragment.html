@@ -1,0 +1,100 @@
+<form
+  method="post"
+  onsubmit="event.preventDefault(); return saveVersionForm(this);"
+  class="form"
+  enctype="multipart/form-data"
+  data-package-id="{{ package_id }}"
+  data-version-id="{{ version_id }}"
+  action="#"
+>
+  <div class="form-row">
+    <label for="version">Version</label>
+    <input
+      id="version"
+      name="version"
+      type="text"
+      value="{{ version_meta.version if version_meta else '' }}"
+      required
+    />
+  </div>
+
+  <div class="form-row">
+    <label for="architecture">Architecture</label>
+    <select id="architecture" name="architecture" required>
+      {% for opt in architecture_options %}
+      <option value="{{ opt }}" {% if version_meta and version_meta.architecture == opt %}selected{% endif %}>
+        {{ opt }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="form-row">
+    <label for="scope">Scope</label>
+    <select id="scope" name="scope" required>
+      {% for opt in scope_options %}
+      <option value="{{ opt }}" {% if version_meta and version_meta.scope == opt %}selected{% endif %}>
+        {{ opt }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="form-row">
+    <label for="installer_type">Installer type</label>
+    <select id="installer_type" name="installer_type">
+      {% for opt in installer_type_options %}
+      <option value="{{ opt }}" {% if (version_meta and version_meta.installer_type == opt) or (not version_meta and opt == 'exe') %}selected{% endif %}>
+        {{ opt }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="form-row">
+    <label for="upload">Installer file</label>
+    {% if version_meta and version_meta.installer_file %}
+    <p class="hint">Current: <code>{{ version_meta.installer_file }}</code></p>
+    {% endif %}
+    <input id="upload" name="upload" type="file" {% if not version_meta %}required{% endif %} />
+    <p class="hint">
+      {% if version_meta %}
+      Upload a new installer to replace the existing one.
+      {% else %}
+      Uploading a setup file is mandatory for a new version.
+      {% endif %}
+    </p>
+  </div>
+
+  <div class="form-row">
+    <label for="silent_arguments">Silent arguments</label>
+    <input
+      id="silent_arguments"
+      name="silent_arguments"
+      type="text"
+      value="{{ version_meta.silent_arguments if version_meta and version_meta.silent_arguments else '' }}"
+    />
+  </div>
+
+  <div class="form-row">
+    <label for="interactive_arguments">Interactive arguments</label>
+    <input
+      id="interactive_arguments"
+      name="interactive_arguments"
+      type="text"
+      value="{{ version_meta.interactive_arguments if version_meta and version_meta.interactive_arguments else '' }}"
+    />
+  </div>
+
+  <div class="form-row">
+    <label for="log_arguments">Log arguments</label>
+    <input
+      id="log_arguments"
+      name="log_arguments"
+      type="text"
+      value="{{ version_meta.log_arguments if version_meta and version_meta.log_arguments else '' }}"
+    />
+  </div>
+
+</form>
+

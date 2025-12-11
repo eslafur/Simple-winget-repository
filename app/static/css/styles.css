@@ -26,4 +26,395 @@ code {
   border-radius: 0.25rem;
 }
 
+/* Forms */
+.form {
+  max-width: 600px;
+}
 
+.form-row {
+  margin-bottom: 1rem;
+}
+
+.form-row label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-weight: 500;
+}
+
+.form-row input[type="text"],
+.form-row input[type="file"],
+.form-row textarea,
+.form-row select {
+  width: 100%;
+  padding: 0.5rem;
+  background-color: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  color: #e5e7eb;
+  font-size: 1rem;
+}
+
+.form-row input[type="text"]:focus,
+.form-row textarea:focus,
+.form-row select:focus {
+  outline: none;
+  border-color: #38bdf8;
+}
+
+.form-row textarea {
+  resize: vertical;
+  min-height: 4rem;
+}
+
+.form-actions {
+  margin-top: 1.5rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.hint {
+  font-size: 0.875rem;
+  color: #94a3b8;
+  margin-top: 0.25rem;
+  margin-bottom: 0;
+}
+
+/* Buttons - Standardized */
+button,
+.button-primary,
+.button-secondary,
+.button-danger,
+.button-add,
+.button-small,
+a.button-primary,
+a.button-secondary,
+a.button-danger {
+  padding: 0.5rem 1rem;
+  margin: 0;
+  border: none;
+  border-radius: 0.25rem;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+  transition: background-color 0.2s;
+  line-height: 1.5;
+}
+
+/* Blue - Primary */
+.button-primary {
+  background-color: #38bdf8;
+  color: #0f172a;
+}
+
+.button-primary:hover {
+  background-color: #0ea5e9;
+}
+
+/* Grey - Secondary */
+.button-secondary {
+  background-color: #334155;
+  color: #e5e7eb;
+}
+
+.button-secondary:hover {
+  background-color: #475569;
+}
+
+/* Red - Danger */
+.button-danger {
+  background-color: #ef4444;
+  color: white;
+}
+
+.button-danger:hover {
+  background-color: #dc2626;
+}
+
+/* Green - Add (regular button) */
+.button-add-regular {
+  background-color: #22c55e;
+  color: white;
+}
+
+.button-add-regular:hover {
+  background-color: #16a34a;
+}
+
+/* Small buttons */
+.button-small {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+}
+
+/* Round + button for adding items to lists */
+.button-add {
+  background-color: #22c55e;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 1.75rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: end;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  transition: background-color 0.2s;
+}
+
+.button-add:hover {
+  background-color: #16a34a;
+}
+
+/* Round edit button with pen icon */
+.button-edit {
+  background-color: #22c55e;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  transition: background-color 0.2s;
+  flex-shrink: 0;
+}
+
+.button-edit:hover {
+  background-color: #16a34a;
+}
+
+/* Round delete button with trashcan icon */
+.button-delete {
+  background-color: #ef4444;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  transition: background-color 0.2s;
+  flex-shrink: 0;
+}
+
+.button-delete:hover {
+  background-color: #dc2626;
+}
+
+/* Back button with left arrow */
+.button-back {
+  background-color: #334155;
+  color: #e5e7eb;
+  border: none;
+  border-radius: 50%;
+  width: 3.5rem;
+  height: 3.5rem;
+  font-size: 2.9rem;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: start;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  transition: background-color 0.2s;
+  flex-shrink: 0;
+}
+
+.button-back:hover {
+  background-color: #475569;
+}
+
+/* Tables */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+}
+
+.table thead {
+  background-color: #1e293b;
+}
+
+.table th,
+.table td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #334155;
+}
+
+.table tbody tr {
+  cursor: pointer;
+}
+
+.table tbody tr:hover {
+  background-color: #1e293b;
+}
+
+/* Toolbar */
+.toolbar {
+  margin-bottom: 1rem;
+}
+
+/* Package detail layout - two columns */
+.package-layout {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+#package-details {
+  min-width: 0;
+}
+
+#versions-section {
+  min-width: 0;
+}
+
+/* Modal */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  cursor: pointer;
+}
+
+.modal-content {
+  position: relative;
+  background-color: #1e293b;
+  border-radius: 0.5rem;
+  max-width: 700px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  z-index: 1001;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border-bottom: 1px solid #334155;
+}
+
+.modal-header h3 {
+  margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: #e5e7eb;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+}
+
+.modal-close:hover {
+  background-color: #334155;
+}
+
+.modal-body {
+  padding: 1.5rem;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 1rem;
+  border-top: 1px solid #334155;
+}
+
+/* Details list */
+.details-list {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 0.75rem 1rem;
+  margin: 1rem 0;
+}
+
+.details-list dt {
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.details-list dd {
+  margin: 0;
+  color: #e5e7eb;
+}
+
+.details-list dd:empty::before {
+  content: "-";
+  color: #64748b;
+}
+
+.tag {
+  display: inline-block;
+  background-color: #1e293b;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+  margin-right: 0.25rem;
+}
+
+/* Section headers with add button */
+h2,
+#versions-section h3,
+#package-details h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.error {
+  color: #ef4444;
+}

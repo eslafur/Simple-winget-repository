@@ -1,0 +1,72 @@
+<form
+  method="post"
+  class="form"
+  enctype="multipart/form-data"
+  data-package-id="{{ package_id }}"
+>
+  <div class="form-row">
+    <label for="package_identifier">Identifier</label>
+    <input
+      id="package_identifier"
+      name="package_identifier"
+      type="text"
+      value="{{ package_id }}"
+      {% if package %}readonly{% else %}required{% endif %}
+    />
+    {% if package %}
+    <p class="hint">Package identifier cannot be changed after creation.</p>
+    {% endif %}
+  </div>
+
+  <div class="form-row">
+    <label for="package_name">Name</label>
+    <input
+      id="package_name"
+      name="package_name"
+      type="text"
+      value="{{ package.package_name if package else '' }}"
+      required
+    />
+  </div>
+
+  <div class="form-row">
+    <label for="publisher">Publisher</label>
+    <input
+      id="publisher"
+      name="publisher"
+      type="text"
+      value="{{ package.publisher if package else '' }}"
+      required
+    />
+  </div>
+
+  <div class="form-row">
+    <label for="short_description">Short description</label>
+    <textarea
+      id="short_description"
+      name="short_description"
+      rows="2"
+    >{{ package.short_description if package and package.short_description else '' }}</textarea>
+  </div>
+
+  <div class="form-row">
+    <label for="license">License</label>
+    <input
+      id="license"
+      name="license"
+      type="text"
+      value="{{ package.license if package and package.license else '' }}"
+    />
+  </div>
+
+  <div class="form-row">
+    <label for="tags">Tags (comma separated)</label>
+    <input
+      id="tags"
+      name="tags"
+      type="text"
+      value="{{ package.tags | join(', ') if package and package.tags else '' }}"
+    />
+  </div>
+</form>
+
