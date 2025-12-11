@@ -90,6 +90,15 @@ def _load_repository_config_from_disk() -> RepositoryConfig:
     else:
         config = RepositoryConfig()
 
+    # Force enum-like options for installer types to the canonical values
+    # defined in models.py so repository.json cannot override them.
+    config.installer_type_options = RepositoryConfig.model_fields[
+        "installer_type_options"
+    ].default_factory()
+    config.nested_installer_type_options = RepositoryConfig.model_fields[
+        "nested_installer_type_options"
+    ].default_factory()
+
     # Persist with all fields populated (including any new defaults).
     path.write_text(config.model_dump_json(indent=2), encoding="utf-8")
     return config

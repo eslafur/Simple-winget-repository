@@ -1,10 +1,10 @@
 <form
   method="post"
-  onsubmit="event.preventDefault(); return saveVersionForm(this);"
   class="form"
   enctype="multipart/form-data"
   data-package-id="{{ package_id }}"
   data-version-id="{{ version_id }}"
+  data-version-form="true"
   action="#"
 >
   <div class="form-row">
@@ -51,6 +51,93 @@
     </select>
   </div>
 
+  <div id="nested-installers-section" class="form-section">
+    <div class="form-row">
+      <label for="nested_installer_type">Nested installer type</label>
+      <select id="nested_installer_type" name="nested_installer_type">
+        <option value="">(None)</option>
+        {% for opt in nested_installer_type_options %}
+        <option
+          value="{{ opt }}"
+          {% if version_meta and version_meta.nested_installer_type == opt %}selected{% endif %}
+        >
+          {{ opt }}
+        </option>
+        {% endfor %}
+      </select>
+      <p class="hint">
+        Used when the installer is an archive (zip) that contains another installer.
+      </p>
+    </div>
+
+    <div class="form-row" id="nested-single-row">
+      <label for="nested_single_relative_file_path">Nested installer path in archive</label>
+      <input
+        id="nested_single_relative_file_path"
+        name="nested_relative_file_path"
+        type="text"
+        value="{% if version_meta and version_meta.nested_installer_type and version_meta.nested_installer_type != 'portable' and version_meta.nested_installer_files %}{{ version_meta.nested_installer_files[0].relative_file_path }}{% else %}{% endif %}"
+      />
+      <p class="hint">
+        Relative path to the nested installer file inside the archive.
+      </p>
+    </div>
+
+    <div class="form-row" id="nested-portable-table-container">
+      <label>Nested portable files</label>
+      <table class="table table-compact" id="nested-portable-table">
+        <thead>
+          <tr>
+            <th>Relative file path</th>
+            <th>Portable command alias (optional)</th>
+          </tr>
+        </thead>
+        <tbody id="nested-portable-tbody">
+          {% if version_meta and version_meta.nested_installer_type == 'portable' and version_meta.nested_installer_files %}
+            {% for f in version_meta.nested_installer_files %}
+            <tr>
+              <td>
+                <input
+                  type="text"
+                  name="nested_relative_file_path"
+                  value="{{ f.relative_file_path }}"
+                />
+              </td>
+              <td>
+                <input
+                  type="text"
+                  name="nested_portable_command_alias"
+                  value="{{ f.portable_command_alias or '' }}"
+                />
+              </td>
+            </tr>
+            {% endfor %}
+          {% endif %}
+          <tr>
+            <td>
+              <input
+                type="text"
+                name="nested_relative_file_path"
+                value=""
+              />
+            </td>
+            <td>
+              <input
+                type="text"
+                name="nested_portable_command_alias"
+                value=""
+              />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="hint">
+        When NestedInstallerType is portable, list each portable binary inside the archive
+        and optionally the command alias that WinGet should expose.
+      </p>
+    </div>
+  </div>
+
   <div class="form-row">
     <label for="upload">Installer file</label>
     {% if version_meta and version_meta.installer_file %}
@@ -64,6 +151,84 @@
       Uploading a setup file is mandatory for a new version.
       {% endif %}
     </p>
+  </div>
+
+  <div id="custom-installer-section" class="form-section">
+    <div class="form-row">
+      <label>Custom installer steps</label>
+      <table class="table table-compact" id="custom-installer-steps">
+        <thead>
+          <tr>
+            <th>Action</th>
+            <th>Argument 1</th>
+            <th>Argument 2</th>
+          </tr>
+        </thead>
+        <tbody id="custom-steps-tbody">
+          {% if version_meta and version_meta.custom_installer_steps %}
+            {% for step in version_meta.custom_installer_steps %}
+            <tr>
+              <td>
+                <select name="custom_action_type">
+                  <option value="">(Select action)</option>
+                  {% for action in custom_actions %}
+                  <option
+                    value="{{ action.id }}"
+                    {% if step.action_type == action.id %}selected{% endif %}
+                  >
+                    {{ action.label }}
+                  </option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td>
+                <input
+                  type="text"
+                  name="custom_arg1"
+                  value="{{ step.argument1 or '' }}"
+                />
+              </td>
+              <td>
+                <input
+                  type="text"
+                  name="custom_arg2"
+                  value="{{ step.argument2 or '' }}"
+                />
+              </td>
+            </tr>
+            {% endfor %}
+          {% endif %}
+          <tr>
+            <td>
+              <select name="custom_action_type">
+                <option value="">(Select action)</option>
+                {% for action in custom_actions %}
+                <option value="{{ action.id }}">{{ action.label }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <input
+                type="text"
+                name="custom_arg1"
+                value=""
+              />
+            </td>
+            <td>
+              <input
+                type="text"
+                name="custom_arg2"
+                value=""
+              />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="hint">
+        The server will generate an <code>install.bat</code> from these steps and
+        package it together with the uploaded installer into a ZIP that WinGet downloads.
+      </p>
+    </div>
   </div>
 
   <div class="form-row">
@@ -97,4 +262,3 @@
   </div>
 
 </form>
-

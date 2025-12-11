@@ -1,21 +1,28 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 import hashlib
 import urllib.parse
+import zipfile
 
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, File, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from app.data.models import PackageCommonMetadata, VersionMetadata
+from app.data.models import (
+    PackageCommonMetadata,
+    VersionMetadata,
+    NestedInstallerFile,
+    CustomInstallerStep,
+)
 from app.data.repository import (
     get_data_dir,
     get_repository_index,
     get_repository_config,
     build_index_from_disk,
 )
+from app import custom_installer
 
 
 router = APIRouter()
@@ -62,6 +69,39 @@ async def _save_upload_and_hash(upload: UploadFile, target_dir: Path) -> tuple[s
             hasher.update(chunk)
 
     return filename, hasher.hexdigest()
+
+
+def _build_custom_installer_package(
+    version_dir: Path,
+    installer_file_name: str,
+    steps: List[CustomInstallerStep],
+) -> str:
+    """
+    Generate install.bat from the configured steps and package it together
+    with the uploaded installer into package.zip. Returns the SHA256 of the zip.
+    """
+    # Ensure we always have at least one step that runs the installer.
+    if not steps:
+        steps = [CustomInstallerStep(action_type="run_installer")]
+
+    script_text = custom_installer.render_install_script(steps, installer_file_name)
+    script_path = version_dir / "install.bat"
+    # Use CRLF endings and UTF-8.
+    script_path.write_text(script_text, encoding="utf-8", newline="\r\n")
+
+    package_zip_path = version_dir / "package.zip"
+    with zipfile.ZipFile(package_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        installer_path = version_dir / installer_file_name
+        if installer_path.is_file():
+            zf.write(installer_path, arcname=installer_file_name)
+        zf.write(script_path, arcname="install.bat")
+
+    hasher = hashlib.sha256()
+    with package_zip_path.open("rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            hasher.update(chunk)
+
+    return hasher.hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +379,8 @@ async def admin_version_form_fragment(
             "architecture_options": config.architecture_options,
             "scope_options": config.scope_options,
             "installer_type_options": config.installer_type_options,
+            "nested_installer_type_options": config.nested_installer_type_options,
+            "custom_actions": custom_installer.get_available_actions(),
         },
     )
 
@@ -354,6 +396,14 @@ async def admin_save_version(
     silent_arguments: str = Form(""),
     interactive_arguments: str = Form(""),
     log_arguments: str = Form(""),
+    nested_installer_type: Optional[str] = Form(default=None),
+    # These may appear multiple times when NestedInstallerType == portable
+    nested_relative_file_path: List[str] = Form(default=[]),
+    nested_portable_command_alias: List[str] = Form(default=[]),
+    # Custom installer steps (for installer_type == "custom")
+    custom_action_type: List[str] = Form(default=[]),
+    custom_arg1: List[str] = Form(default=[]),
+    custom_arg2: List[str] = Form(default=[]),
     upload: UploadFile | None = File(default=None),
 ) -> JSONResponse:
     """
@@ -397,8 +447,10 @@ async def admin_save_version(
     
     if has_new_upload:
         # New file uploaded
-        installer_file_name, installer_sha256 = await _save_upload_and_hash(upload, version_dir)
-        
+        installer_file_name, installer_sha256 = await _save_upload_and_hash(
+            upload, version_dir
+        )
+
         # If updating and old installer had different name, delete old file
         if existing_version and existing_version.installer_file and existing_version.installer_file != installer_file_name:
             old_installer_path = version_dir / existing_version.installer_file
@@ -432,6 +484,74 @@ async def admin_save_version(
     version_dir.mkdir(parents=True, exist_ok=True)
     version_json = version_dir / "version.json"
     
+    # Build nested installer metadata (manual nested installers for zip types)
+    nested_type_value: Optional[str] = None
+    nested_files_value: List[NestedInstallerFile] = []
+
+    nested_installer_type = (nested_installer_type or "").strip() or None
+
+    if installer_type == "zip" and nested_installer_type:
+        nested_type_value = nested_installer_type
+        # Normalize lists from the form
+        paths = [p.strip() for p in nested_relative_file_path]
+        aliases = [a.strip() for a in nested_portable_command_alias]
+
+        if nested_installer_type == "portable":
+            for idx, path in enumerate(paths):
+                if not path:
+                    continue
+                alias = aliases[idx] if idx < len(aliases) else ""
+                alias = alias.strip()
+                nested_files_value.append(
+                    NestedInstallerFile(
+                        relative_file_path=path,
+                        portable_command_alias=alias or None,
+                    )
+                )
+        else:
+            # For non-portable nested installers we currently support a single
+            # RelativeFilePath entry.
+            if paths and paths[0]:
+                nested_files_value.append(
+                    NestedInstallerFile(relative_file_path=paths[0], portable_command_alias=None)
+                )
+
+    # Build custom installer steps if requested
+    custom_steps: List[CustomInstallerStep] = []
+    if installer_type == "custom":
+        for idx, action in enumerate(custom_action_type):
+            action = (action or "").strip()
+            arg1 = (custom_arg1[idx] if idx < len(custom_arg1) else "").strip()
+            arg2 = (custom_arg2[idx] if idx < len(custom_arg2) else "").strip()
+
+            # Skip completely empty rows
+            if not action and not arg1 and not arg2:
+                continue
+            if not action:
+                # Ignore rows without an action type
+                continue
+
+            custom_steps.append(
+                CustomInstallerStep(
+                    action_type=action,
+                    argument1=arg1 or None,
+                    argument2=arg2 or None,
+                )
+            )
+
+        # For custom installers, build or rebuild the package.zip and compute
+        # the SHA256 of the zip (which is what WinGet will download).
+        if not installer_file_name:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Installer file is required for custom installer versions"},
+            )
+        installer_sha256 = _build_custom_installer_package(
+            version_dir=version_dir,
+            installer_file_name=installer_file_name,
+            steps=custom_steps,
+        )
+
     meta = VersionMetadata(
         version=version,
         architecture=architecture,
@@ -442,6 +562,9 @@ async def admin_save_version(
         silent_arguments=silent_arguments or None,
         interactive_arguments=interactive_arguments or None,
         log_arguments=log_arguments or None,
+        nested_installer_type=nested_type_value,
+        nested_installer_files=nested_files_value,
+        custom_installer_steps=custom_steps if installer_type == "custom" else [],
         release_date=existing_version.release_date if existing_version else None,
         release_notes=existing_version.release_notes if existing_version else None,
     )

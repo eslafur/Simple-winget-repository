@@ -288,6 +288,35 @@ async def get_package_manifests(package_id: str, request: Request) -> dict:
                 # Skip installers that cannot satisfy the contract.
                 continue
 
+            # Determine installer type and any nested installer metadata.
+            installer_type_value = v.installer_type
+            nested_type = None
+            nested_files: List[dict] = []
+
+            if v.installer_type == "custom":
+                # Custom installers are exposed to WinGet as a zip that contains
+                # an install.bat which orchestrates the real installer.
+                installer_type_value = "zip"
+                nested_type = "exe"
+                nested_files = [
+                    {
+                        "RelativeFilePath": "install.bat",
+                        "PortableCommandAlias": None,
+                    }
+                ]
+            elif v.installer_type == "zip":
+                nested_type = getattr(v, "nested_installer_type", None)
+                nested_files_attr = getattr(v, "nested_installer_files", []) or []
+                for f in nested_files_attr:
+                    nested_files.append(
+                        {
+                            "RelativeFilePath": f.relative_file_path,
+                            "PortableCommandAlias": getattr(
+                                f, "portable_command_alias", None
+                            ),
+                        }
+                    )
+
             installers.append(
                 {
                     "InstallerIdentifier": f"{v.version}-{v.architecture}-{v.scope}",
@@ -297,7 +326,7 @@ async def get_package_manifests(package_id: str, request: Request) -> dict:
                     "InstallerLocale": "en-US",
                     "Platform": ["Windows.Desktop"],
                     "MinimumOSVersion": "10.0.0.0",
-                    "InstallerType": v.installer_type,
+                    "InstallerType": installer_type_value,
                     "Scope": v.scope,
                     "SignatureSha256": None,
                     "InstallModes": ["interactive", "silent", "silentWithProgress"],
@@ -338,8 +367,8 @@ async def get_package_manifests(package_id: str, request: Request) -> dict:
                     "UnsupportedOSArchitectures": [],
                     "AppsAndFeaturesEntries": [],
                     "Markets": None,
-                    "NestedInstallerType": None,
-                    "NestedInstallerFiles": [],
+                    "NestedInstallerType": nested_type,
+                    "NestedInstallerFiles": nested_files,
                     "DisplayInstallWarnings": False,
                     "UnsupportedArguments": [],
                     "InstallationMetadata": {
@@ -419,7 +448,16 @@ async def download_installer(package_id: str, version: str) -> FileResponse:
         )
 
     data_dir = get_data_dir()
-    installer_path = data_dir / v.storage_path / v.installer_file
+
+    # For custom installer types we serve the generated package.zip which
+    # contains install.bat and the real installer. For all other types we
+    # serve the uploaded installer file directly.
+    if v.installer_type == "custom":
+        installer_filename = "package.zip"
+    else:
+        installer_filename = v.installer_file
+
+    installer_path = data_dir / v.storage_path / installer_filename
 
     if not installer_path.is_file():
         raise HTTPException(
@@ -430,7 +468,7 @@ async def download_installer(package_id: str, version: str) -> FileResponse:
     # Let FastAPI/Uvicorn stream the file efficiently.
     return FileResponse(
         path=str(installer_path),
-        filename=v.installer_file,
+        filename=installer_filename,
         media_type="application/octet-stream",
     )
 

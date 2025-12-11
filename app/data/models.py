@@ -37,7 +37,6 @@ class AuthenticationConfig(BaseModel):
 class RepositoryConfig(BaseModel):
     """
     Top-level configuration describing the repository itself.
-
     Persisted at: <DATA_DIR>/repository.json
     """
 
@@ -104,8 +103,22 @@ class RepositoryConfig(BaseModel):
         description="Valid scope values for installers.",
     )
     installer_type_options: List[str] = Field(
-        default_factory=lambda: ["exe", "msi", "msix", "zip"],
+        default_factory=lambda: ["exe", "msi", "msix", "zip", "custom"],
         description="Valid installer types.",
+    )
+    nested_installer_type_options: List[str] = Field(
+        default_factory=lambda: [
+            "portable",
+            "exe",
+            "msi",
+            "msix",
+            "appx",
+            "inno",
+            "nullsoft",
+            "wix",
+            "burn",
+        ],
+        description="Valid NestedInstallerType values for zip installers.",
     )
 
 
@@ -129,6 +142,27 @@ class PackageCommonMetadata(BaseModel):
     )
 
 
+class NestedInstallerFile(BaseModel):
+    """
+    Internal representation of a single NestedInstallerFile entry.
+
+    This mirrors the WinGet contract but uses snake_case for JSON persistence.
+    """
+
+    relative_file_path: str
+    portable_command_alias: Optional[str] = None
+
+
+class CustomInstallerStep(BaseModel):
+    """
+    One logical step in a server-generated custom installer script.
+    """
+
+    action_type: str
+    argument1: Optional[str] = None
+    argument2: Optional[str] = None
+
+
 class VersionMetadata(BaseModel):
     """
     Information that is specific to a concrete version/architecture/scope.
@@ -148,6 +182,22 @@ class VersionMetadata(BaseModel):
     silent_arguments: Optional[str] = None
     interactive_arguments: Optional[str] = None
     log_arguments: Optional[str] = None
+
+    # Nested installer metadata (used when installer_type == 'zip').
+    nested_installer_type: Optional[str] = None
+    nested_installer_files: List[NestedInstallerFile] = Field(
+        default_factory=list,
+        description="List of nested installer files inside an archive installer.",
+    )
+
+    # Custom installer metadata (used when installer_type == 'custom').
+    # The uploaded installer file name is stored in installer_file; the
+    # generated package.zip (containing install.bat + installer_file) is
+    # what WinGet will download, and its hash is stored in installer_sha256.
+    custom_installer_steps: List[CustomInstallerStep] = Field(
+        default_factory=list,
+        description="Logical steps that will be rendered into install.bat.",
+    )
 
     release_date: Optional[datetime] = None
     release_notes: Optional[str] = None

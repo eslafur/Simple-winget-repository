@@ -269,6 +269,15 @@ a.button-danger {
   background-color: #1e293b;
 }
 
+.table-compact tbody tr {
+  cursor: default;
+}
+
+.table-compact th,
+.table-compact td {
+  padding: 0.5rem;
+}
+
 /* Package detail layout - two columns */
 .package-layout {
   display: grid;

@@ -102,6 +102,178 @@ function openVersionModal(packageId, versionId) {
   );
 }
 
+// Optional hook invoked by the modal component after it has loaded new HTML
+// into the modal body. We use this to wire up dynamic behaviour for the
+// version form (nested installers + custom installer steps).
+window.onModalContentLoaded = function(modalBody) {
+  const form = modalBody.querySelector('form[data-version-form="true"]');
+  if (!form) {
+    return;
+  }
+
+  const installerTypeSelect = form.querySelector('#installer_type');
+  const nestedSection = form.querySelector('#nested-installers-section');
+  const nestedTypeSelect = form.querySelector('#nested_installer_type');
+  const nestedSingleRow = form.querySelector('#nested-single-row');
+  const nestedPortableContainer = form.querySelector('#nested-portable-table-container');
+  const nestedPortableTbody = form.querySelector('#nested-portable-tbody');
+  const customSection = form.querySelector('#custom-installer-section');
+  const customStepsTbody = form.querySelector('#custom-steps-tbody');
+
+  function updateNestedLayout() {
+    if (!nestedSection) return;
+    const nestedType = (nestedTypeSelect && nestedTypeSelect.value) || '';
+    if (!nestedType) {
+      if (nestedSingleRow) nestedSingleRow.style.display = 'none';
+      if (nestedPortableContainer) nestedPortableContainer.style.display = 'none';
+      return;
+    }
+
+    if (nestedType === 'portable') {
+      if (nestedSingleRow) nestedSingleRow.style.display = 'none';
+      if (nestedPortableContainer) nestedPortableContainer.style.display = '';
+    } else {
+      if (nestedSingleRow) nestedSingleRow.style.display = '';
+      if (nestedPortableContainer) nestedPortableContainer.style.display = 'none';
+    }
+  }
+
+  function updateVisibility() {
+    const type = installerTypeSelect ? installerTypeSelect.value : '';
+    if (nestedSection) {
+      nestedSection.style.display = type === 'zip' ? '' : 'none';
+    }
+    if (customSection) {
+      customSection.style.display = type === 'custom' ? '' : 'none';
+    }
+    if (type === 'zip') {
+      updateNestedLayout();
+    }
+  }
+
+  function setupDynamicPortableRows(tbody) {
+    if (!tbody) return;
+
+    function createRow() {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>
+          <input type="text" name="nested_relative_file_path" value="">
+        </td>
+        <td>
+          <input type="text" name="nested_portable_command_alias" value="">
+        </td>
+      `;
+      return tr;
+    }
+
+    function refresh() {
+      let rows = Array.from(tbody.querySelectorAll('tr'));
+      if (rows.length === 0) {
+        tbody.appendChild(createRow());
+        rows = Array.from(tbody.querySelectorAll('tr'));
+      }
+
+      // Remove completely empty rows except for the last one.
+      for (let i = 0; i < rows.length - 1; i++) {
+        const inputs = rows[i].querySelectorAll('input');
+        const allEmpty = Array.from(inputs).every((input) => !input.value.trim());
+        if (allEmpty) {
+          tbody.removeChild(rows[i]);
+        }
+      }
+
+      rows = Array.from(tbody.querySelectorAll('tr'));
+      const last = rows[rows.length - 1];
+      const lastInputs = last.querySelectorAll('input');
+      const anyValue = Array.from(lastInputs).some((input) => input.value.trim());
+      if (anyValue) {
+        tbody.appendChild(createRow());
+      }
+    }
+
+    tbody.addEventListener('input', refresh);
+    refresh();
+  }
+
+  function setupDynamicCustomRows(tbody) {
+    if (!tbody) return;
+
+    function createRow() {
+      const tr = document.createElement('tr');
+      // Clone the structure of the last row to preserve action options.
+      const templateRow = tbody.querySelector('tr:last-child');
+      if (templateRow) {
+        tr.innerHTML = templateRow.innerHTML;
+        // Clear values in inputs and reset selects.
+        const select = tr.querySelector('select[name="custom_action_type"]');
+        if (select) {
+          select.value = '';
+        }
+        const inputs = tr.querySelectorAll('input[name="custom_arg1"], input[name="custom_arg2"]');
+        inputs.forEach((input) => {
+          input.value = '';
+        });
+      } else {
+        tr.innerHTML = `
+          <td>
+            <select name="custom_action_type">
+              <option value="">(Select action)</option>
+            </select>
+          </td>
+          <td><input type="text" name="custom_arg1" value=""></td>
+          <td><input type="text" name="custom_arg2" value=""></td>
+        `;
+      }
+      return tr;
+    }
+
+    function refresh() {
+      let rows = Array.from(tbody.querySelectorAll('tr'));
+      if (rows.length === 0) {
+        tbody.appendChild(createRow());
+        rows = Array.from(tbody.querySelectorAll('tr'));
+      }
+
+      // Remove completely empty rows except for the last one.
+      for (let i = 0; i < rows.length - 1; i++) {
+        const select = rows[i].querySelector('select[name="custom_action_type"]');
+        const inputs = rows[i].querySelectorAll('input[name="custom_arg1"], input[name="custom_arg2"]');
+        const hasAction = select && select.value;
+        const hasArgs = Array.from(inputs).some((input) => input.value.trim());
+        if (!hasAction && !hasArgs) {
+          tbody.removeChild(rows[i]);
+        }
+      }
+
+      rows = Array.from(tbody.querySelectorAll('tr'));
+      const last = rows[rows.length - 1];
+      const lastSelect = last.querySelector('select[name="custom_action_type"]');
+      const lastInputs = last.querySelectorAll('input[name="custom_arg1"], input[name="custom_arg2"]');
+      const hasAction = lastSelect && lastSelect.value;
+      const hasArgs = Array.from(lastInputs).some((input) => input.value.trim());
+      if (hasAction || hasArgs) {
+        tbody.appendChild(createRow());
+      }
+    }
+
+    tbody.addEventListener('input', refresh);
+    tbody.addEventListener('change', refresh);
+    refresh();
+  }
+
+  if (installerTypeSelect) {
+    installerTypeSelect.addEventListener('change', updateVisibility);
+  }
+  if (nestedTypeSelect) {
+    nestedTypeSelect.addEventListener('change', updateNestedLayout);
+  }
+
+  setupDynamicPortableRows(nestedPortableTbody);
+  setupDynamicCustomRows(customStepsTbody);
+  updateVisibility();
+}
+
 function openVersionModalClone(packageId, sourceVersionId) {
   const encodedSourceVersionId = encodeURIComponent(sourceVersionId);
   openModal(

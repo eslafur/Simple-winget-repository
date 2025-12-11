@@ -57,6 +57,11 @@ function openModal(title, fragmentUrl, submitEndpoint, closeAction = 'close') {
       } else {
         modalSubmit.style.display = 'none';
       }
+
+      // Let pages hook into modal content loading (used for dynamic form UI).
+      if (typeof window.onModalContentLoaded === 'function') {
+        window.onModalContentLoaded(modalBody);
+      }
     })
     .catch(error => {
       modalBody.innerHTML = `<p class="error">Error loading form: ${error.message}</p>`;
