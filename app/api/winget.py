@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 import hashlib
+import re
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, JSONResponse
@@ -129,6 +130,145 @@ class ManifestSearchRequest(BaseModel):
     Filters: List[PackageMatchFilter] = []
 
 
+def _match_text(value: str, keyword: str, match_type: Optional[str]) -> bool:
+    """
+    Apply WinGet-style text matching rules to a single value.
+    """
+    if keyword is None:
+        return False
+    keyword = keyword or ""
+    match = (match_type or "Substring").strip() or "Substring"
+
+    # Exact is case-sensitive; everything else we treat as case-insensitive.
+    if match == "Exact":
+        return value == keyword
+
+    v = value.lower()
+    k = keyword.lower()
+
+    if match in ("CaseInsensitive",):
+        return v == k
+    if match == "StartsWith":
+        return v.startswith(k)
+    if match in ("Substring", "Fuzzy", "FuzzySubstring"):
+        return k in v
+    if match == "Wildcard":
+        # Very simple wildcard support: * and ?
+        pattern = "^" + re.escape(keyword).replace(r"\*", ".*").replace(r"\?", ".") + "$"
+        return re.search(pattern, value, flags=re.IGNORECASE) is not None
+
+    # Fallback: case-insensitive substring
+    return k in v
+
+
+def _values_for_field(
+    field: str,
+    package_id: str,
+    pkg_index,
+) -> List[str]:
+    """
+    Return the list of string values for a given PackageMatchField for a package.
+
+    We only support a subset of fields; unsupported fields return an empty list,
+    which will cause filters using them to fail to match.
+    """
+    pkg = pkg_index.package
+    field = field or ""
+
+    if field == "PackageIdentifier":
+        return [package_id]
+    if field == "PackageName":
+        return [pkg.package_name] if pkg.package_name else []
+    if field == "Moniker":
+        # Not currently modeled.
+        return []
+    if field == "Command":
+        # Not currently modeled.
+        return []
+    if field == "Tag":
+        return pkg.tags or []
+    if field == "PackageFamilyName":
+        # Not currently modeled.
+        return []
+    if field == "ProductCode":
+        vals: List[str] = []
+        for v in pkg_index.versions:
+            code = getattr(v, "product_code", None)
+            if code:
+                vals.append(code)
+        return vals
+    if field == "UpgradeCode":
+        # Not currently modeled.
+        return []
+    if field == "NormalizedPackageNameAndPublisher":
+        # Explicitly unsupported per repository configuration.
+        return []
+    if field == "Market":
+        # Not modeled at all in this simple repository.
+        return []
+    if field == "HasInstallerType":
+        # Could be implemented, but we don't use it today.
+        return []
+
+    # Unknown / unsupported field.
+    return []
+
+
+def _package_matches_filter(
+    package_id: str,
+    pkg_index,
+    flt: PackageMatchFilter,
+) -> bool:
+    """
+    Evaluate a single PackageMatchFilter against a package.
+    """
+    if not flt or not flt.RequestMatch:
+        return True
+
+    keyword = flt.RequestMatch.KeyWord or ""
+    match_type = flt.RequestMatch.MatchType
+
+    values = _values_for_field(flt.PackageMatchField, package_id, pkg_index)
+    if not values:
+        return False
+
+    for v in values:
+        if _match_text(str(v), keyword, match_type):
+            return True
+    return False
+
+
+def _package_matches_query(
+    package_id: str,
+    pkg_index,
+    query: Optional[RequestMatch],
+) -> bool:
+    """
+    Apply the top-level Query.RequestMatch to a package.
+
+    Per spec, this matches against source-defined fields; here we use
+    identifier, name, publisher and tags as the searchable surface.
+    """
+    if not query or not query.KeyWord:
+        return False
+
+    keyword = query.KeyWord
+    match_type = query.MatchType
+
+    pkg = pkg_index.package
+    candidates = [
+        package_id,
+        pkg.package_name or "",
+        pkg.publisher or "",
+        *(pkg.tags or []),
+    ]
+
+    for value in candidates:
+        if _match_text(value, keyword, match_type):
+            return True
+    return False
+
+
 @router.post("/manifestSearch")
 async def manifest_search(body: ManifestSearchRequest) -> Response:
     """
@@ -140,46 +280,83 @@ async def manifest_search(body: ManifestSearchRequest) -> Response:
     index = get_repository_index()
     config = get_repository_config()
 
-    keyword = (
-        body.Query.KeyWord.strip().lower()
-        if body.Query and body.Query.KeyWord
-        else ""
-    )
+    # Step 1: determine the starting set of packages.
+    all_ids = list(index.packages.keys())
 
+    if body.FetchAllManifests:
+        candidate_ids = set(all_ids)
+    else:
+        candidate_ids: set[str] = set()
+
+        # Query across source-defined fields.
+        if body.Query and body.Query.KeyWord:
+            for package_id, pkg_index in index.packages.items():
+                if _package_matches_query(package_id, pkg_index, body.Query):
+                    candidate_ids.add(package_id)
+
+        # Inclusions: OR-ed with Query results.
+        for inc in body.Inclusions or []:
+            for package_id, pkg_index in index.packages.items():
+                if _package_matches_filter(package_id, pkg_index, inc):
+                    candidate_ids.add(package_id)
+
+        # If neither Query nor Inclusions were provided, start from all packages.
+        if not candidate_ids and not (body.Query and body.Query.KeyWord) and not (
+            body.Inclusions
+        ):
+            candidate_ids = set(all_ids)
+
+    # Step 2: apply Filters (AND across all filters).
+    filtered_ids: List[str] = []
+    for package_id in candidate_ids:
+        pkg_index = index.packages.get(package_id)
+        if not pkg_index:
+            continue
+
+        matches_all_filters = True
+        for flt in body.Filters or []:
+            if not _package_matches_filter(package_id, pkg_index, flt):
+                matches_all_filters = False
+                break
+
+        if matches_all_filters:
+            filtered_ids.append(package_id)
+
+    # Step 3: build the response payload.
     results: List[dict] = []
-    for package_id, pkg_index in index.packages.items():
+    for package_id in filtered_ids:
+        pkg_index = index.packages.get(package_id)
+        if not pkg_index:
+            continue
         pkg = pkg_index.package
-
-        if keyword:
-            haystack = " ".join(
-                [
-                    package_id,
-                    pkg.package_name or "",
-                    pkg.publisher or "",
-                    " ".join(pkg.tags or []),
-                ]
-            ).lower()
-            if keyword not in haystack:
-                continue
 
         version_strings = sorted(
             {v.version for v in pkg_index.versions if v.version},
             reverse=True,
         )
 
-        versions = [
-            {
-                "PackageVersion": v,
-                "Channel": None,
-                "PackageFamilyNames": [],
-                "ProductCodes": [],
-                "AppsAndFeaturesEntryVersions": [],
-                "UpgradeCodes": [],
-            }
-            for v in version_strings
-        ]
+        versions_payload: List[dict] = []
+        for ver in version_strings:
+            # Collect product codes for this logical version (across arch/scope).
+            product_codes = sorted(
+                {
+                    v.product_code
+                    for v in pkg_index.versions
+                    if v.version == ver and getattr(v, "product_code", None)
+                }
+            )
+            versions_payload.append(
+                {
+                    "PackageVersion": ver,
+                    "Channel": None,
+                    "PackageFamilyNames": [],
+                    "ProductCodes": product_codes,
+                    "AppsAndFeaturesEntryVersions": [],
+                    "UpgradeCodes": [],
+                }
+            )
 
-        if not versions:
+        if not versions_payload:
             continue
 
         results.append(
@@ -187,7 +364,7 @@ async def manifest_search(body: ManifestSearchRequest) -> Response:
                 "PackageIdentifier": package_id,
                 "PackageName": pkg.package_name,
                 "Publisher": pkg.publisher,
-                "Versions": versions,
+                "Versions": versions_payload,
             }
         )
 
@@ -275,8 +452,9 @@ async def get_package_manifests(package_id: str, request: Request) -> dict:
 
         installers: List[dict] = []
         for v in version_list:
+            installer_identifier = f"{v.version}-{v.architecture}-{v.scope}"
             installer_url = (
-                f"{base_url}/winget/packages/{package_id}/versions/{v.version}/installer"
+                f"{base_url}/winget/packages/{package_id}/versions/{installer_identifier}/installer"
             )
 
             # InstallerSha256 is required for non-MSStore installers.
@@ -440,21 +618,27 @@ async def get_package_manifests(package_id: str, request: Request) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/packages/{package_id}/versions/{version}/installer")
-async def download_installer(package_id: str, version: str) -> FileResponse:
+@router.get("/packages/{package_id}/versions/{installer_id}/installer")
+async def download_installer(package_id: str, installer_id: str) -> FileResponse:
     """
-    Download endpoint that serves the installer file for a given package version.
+    Download endpoint that serves the installer file for a given
+    (version, architecture, scope) combination.
 
     The installer file is expected to live alongside the version.json file
-    inside the version's directory.
+    inside the version's directory. The installer_id parameter is expected
+    to be in the form "<version>-<architecture>-<scope>" and must match the
+    InstallerIdentifier emitted in the manifest.
     """
     index = get_repository_index()
     pkg_index = index.packages.get(package_id)
     if not pkg_index:
         raise HTTPException(status_code=404, detail="Package not found")
 
+    # Find the concrete version entry matching the installer identifier.
     matching_versions = [
-        v for v in pkg_index.versions if v.version == version
+        v
+        for v in pkg_index.versions
+        if f"{v.version}-{v.architecture}-{v.scope}" == installer_id
     ]
     if not matching_versions:
         raise HTTPException(status_code=404, detail="Version not found")

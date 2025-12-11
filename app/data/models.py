@@ -68,7 +68,7 @@ class RepositoryConfig(BaseModel):
         description="Optional agreements that are presented to the user.",
     )
     server_supported_versions: List[str] = Field(
-        default_factory=lambda: ["1.0.0"],
+        default_factory=lambda: ["1.0.0", "1.1.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.9.0", "1.10.0", "1.12.0"],
         description="WinGet REST API contract versions supported by this server.",
     )
     unsupported_package_match_fields: List[str] = Field(

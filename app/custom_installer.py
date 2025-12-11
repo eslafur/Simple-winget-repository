@@ -58,9 +58,11 @@ def render_install_script(
         if step.action_type == "run_installer":
             extra_args = (step.argument1 or "").strip()
             if extra_args:
-                lines.append(f'start "" "{installer_filename}" {extra_args}')
+                # Use CALL so that the batch script waits for the installer
+                # to complete before continuing with subsequent steps.
+                lines.append(f'call "{installer_filename}" {extra_args}')
             else:
-                lines.append(f'start "" "{installer_filename}"')
+                lines.append(f'call "{installer_filename}"')
         elif step.action_type == "write_version_to_registry" and not added_registry_snippet:
             added_registry_snippet = True
             # Compute the final ARP key and reg.exe invocation in Python so the
