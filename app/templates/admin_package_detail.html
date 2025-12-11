@@ -119,6 +119,8 @@ window.onModalContentLoaded = function(modalBody) {
   const nestedPortableTbody = form.querySelector('#nested-portable-tbody');
   const customSection = form.querySelector('#custom-installer-section');
   const customStepsTbody = form.querySelector('#custom-steps-tbody');
+  const depsFilter = form.querySelector('#package_dependencies_filter');
+  const depsSelect = form.querySelector('#package_dependencies');
 
   function updateNestedLayout() {
     if (!nestedSection) return;
@@ -271,8 +273,76 @@ window.onModalContentLoaded = function(modalBody) {
 
   setupDynamicPortableRows(nestedPortableTbody);
   setupDynamicCustomRows(customStepsTbody);
+
+  // Simple client-side filter for the package dependencies multi-select.
+  if (depsFilter && depsSelect) {
+    depsFilter.addEventListener('input', () => {
+      const term = depsFilter.value.toLowerCase();
+      Array.from(depsSelect.options).forEach((opt) => {
+        const text = opt.textContent || opt.value || '';
+        opt.hidden = term && !text.toLowerCase().includes(term);
+      });
+    });
+  }
   updateVisibility();
 }
+
+// Validation for required fields in the version form. Returns an error
+// message string when validation fails, or null/undefined when OK.
+window.validateVersionForm = function(form) {
+  const get = (selector) => form.querySelector(selector);
+
+  const versionInput = get('#version');
+  if (!versionInput || !versionInput.value.trim()) {
+    return 'Version is required.';
+  }
+
+  const productCodeInput = get('#product_code');
+  if (!productCodeInput || !productCodeInput.value.trim()) {
+    return 'Product code is required.';
+  }
+
+  const installerTypeSelect = get('#installer_type');
+  const installerType = installerTypeSelect ? installerTypeSelect.value : '';
+
+  if (installerType === 'zip') {
+    const nestedTypeSelect = get('#nested_installer_type');
+    const nestedType = nestedTypeSelect ? nestedTypeSelect.value : '';
+    if (!nestedType) {
+      return 'Nested installer type is required for zip installers.';
+    }
+
+    if (nestedType === 'portable') {
+      const portableRows = Array.from(
+        form.querySelectorAll('#nested-portable-tbody tr')
+      );
+      const hasPath = portableRows.some((row) => {
+        const input = row.querySelector('input[name="nested_relative_file_path"]');
+        return input && input.value.trim();
+      });
+      if (!hasPath) {
+        return 'At least one nested portable file path is required.';
+      }
+    } else {
+      const singlePathInput = get('#nested_single_relative_file_path');
+      if (!singlePathInput || !singlePathInput.value.trim()) {
+        return 'Nested installer path in archive is required.';
+      }
+    }
+  }
+
+  if (installerType === 'custom') {
+    const actionSelects = Array.from(
+      form.querySelectorAll('select[name="custom_action_type"]')
+    );
+    const hasAction = actionSelects.some((sel) => sel.value && sel.value.trim());
+    if (!hasAction) {
+      return 'At least one custom installer action must be configured.';
+    }
+  }
+
+  return null;
+};
 
 function openVersionModalClone(packageId, sourceVersionId) {
   const encodedSourceVersionId = encodeURIComponent(sourceVersionId);

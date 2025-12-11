@@ -317,6 +317,28 @@ async def get_package_manifests(package_id: str, request: Request) -> dict:
                         }
                     )
 
+            # InstallModes derived from per-version booleans (falling back to
+            # previous behavior if fields are missing).
+            install_modes: List[str] = []
+            if getattr(v, "install_mode_interactive", True):
+                install_modes.append("interactive")
+            if getattr(v, "install_mode_silent", True):
+                install_modes.append("silent")
+            if getattr(v, "install_mode_silent_with_progress", True):
+                install_modes.append("silentWithProgress")
+
+            # Dependencies (only PackageDependencies are currently modeled).
+            package_deps: List[dict] = []
+            for dep_id in getattr(v, "package_dependencies", []) or []:
+                package_deps.append({"PackageIdentifier": dep_id})
+
+            # Elevation requirement derived from the requires_elevation flag.
+            elevation_requirement = (
+                "elevationRequired"
+                if getattr(v, "requires_elevation", False)
+                else "none"
+            )
+
             installers.append(
                 {
                     "InstallerIdentifier": f"{v.version}-{v.architecture}-{v.scope}",
@@ -329,10 +351,13 @@ async def get_package_manifests(package_id: str, request: Request) -> dict:
                     "InstallerType": installer_type_value,
                     "Scope": v.scope,
                     "SignatureSha256": None,
-                    "InstallModes": ["interactive", "silent", "silentWithProgress"],
+                    "InstallModes": install_modes,
                     "InstallerSwitches": {
                         "Silent": v.silent_arguments,
-                        "SilentWithProgress": v.silent_arguments,
+                        "SilentWithProgress": getattr(
+                            v, "silent_with_progress_arguments", None
+                        )
+                        or v.silent_arguments,
                         "Interactive": v.interactive_arguments,
                         "InstallLocation": None,
                         "Log": v.log_arguments,
@@ -349,11 +374,11 @@ async def get_package_manifests(package_id: str, request: Request) -> dict:
                     "Dependencies": {
                         "WindowsFeatures": [],
                         "WindowsLibraries": [],
-                        "PackageDependencies": [],
+                        "PackageDependencies": package_deps,
                         "ExternalDependencies": [],
                     },
                     "PackageFamilyName": None,
-                    "ProductCode": None,
+                    "ProductCode": getattr(v, "product_code", None),
                     "Capabilities": [],
                     "RestrictedCapabilities": [],
                     "MSStoreProductIdentifier": None,
@@ -363,7 +388,7 @@ async def get_package_manifests(package_id: str, request: Request) -> dict:
                     else None,
                     "InstallLocationRequired": False,
                     "RequireExplicitUpgrade": False,
-                    "ElevationRequirement": "elevationRequired",
+                    "ElevationRequirement": elevation_requirement,
                     "UnsupportedOSArchitectures": [],
                     "AppsAndFeaturesEntries": [],
                     "Markets": None,

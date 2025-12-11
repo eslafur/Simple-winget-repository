@@ -97,6 +97,18 @@ async function submitModal() {
   const progressContainer = document.getElementById('upload-progress-container');
   const progressFill = document.getElementById('upload-progress-fill');
   const progressText = document.getElementById('upload-progress-text');
+
+  // Optional per-form validation hook (used by the version editor).
+  if (
+    currentForm.dataset.versionForm === 'true' &&
+    typeof window.validateVersionForm === 'function'
+  ) {
+    const errorMessage = window.validateVersionForm(currentForm);
+    if (errorMessage) {
+      alert(errorMessage);
+      return;
+    }
+  }
   
   if (!submitEndpoint) {
     // Try to submit the form directly if it has its own handler

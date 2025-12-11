@@ -8,12 +8,23 @@
   action="#"
 >
   <div class="form-row">
-    <label for="version">Version</label>
+    <label for="version">Version *</label>
     <input
       id="version"
       name="version"
       type="text"
       value="{{ version_meta.version if version_meta else '' }}"
+      required
+    />
+  </div>
+
+  <div class="form-row">
+    <label for="product_code">Product code *</label>
+    <input
+      id="product_code"
+      name="product_code"
+      type="text"
+      value="{{ version_meta.product_code if version_meta and version_meta.product_code else '' }}"
       required
     />
   </div>
@@ -53,7 +64,7 @@
 
   <div id="nested-installers-section" class="form-section">
     <div class="form-row">
-      <label for="nested_installer_type">Nested installer type</label>
+      <label for="nested_installer_type">Nested installer type *</label>
       <select id="nested_installer_type" name="nested_installer_type">
         <option value="">(None)</option>
         {% for opt in nested_installer_type_options %}
@@ -71,7 +82,7 @@
     </div>
 
     <div class="form-row" id="nested-single-row">
-      <label for="nested_single_relative_file_path">Nested installer path in archive</label>
+      <label for="nested_single_relative_file_path">Nested installer path in archive *</label>
       <input
         id="nested_single_relative_file_path"
         name="nested_relative_file_path"
@@ -232,7 +243,19 @@
   </div>
 
   <div class="form-row">
-    <label for="silent_arguments">Silent arguments</label>
+    <label for="silent_arguments">
+      <input
+        type="checkbox"
+        name="install_mode_silent"
+        value="1"
+        {% if version_meta %}
+          {% if version_meta.install_mode_silent %}checked{% endif %}
+        {% else %}
+          checked
+        {% endif %}
+      />
+      Silent arguments
+    </label>
     <input
       id="silent_arguments"
       name="silent_arguments"
@@ -242,7 +265,41 @@
   </div>
 
   <div class="form-row">
-    <label for="interactive_arguments">Interactive arguments</label>
+    <label for="silent_with_progress_arguments">
+      <input
+        type="checkbox"
+        name="install_mode_silent_with_progress"
+        value="1"
+        {% if version_meta %}
+          {% if version_meta.install_mode_silent_with_progress %}checked{% endif %}
+        {% else %}
+          checked
+        {% endif %}
+      />
+      Silent with progress
+    </label>
+    <input
+      id="silent_with_progress_arguments"
+      name="silent_with_progress_arguments"
+      type="text"
+      value="{{ version_meta.silent_with_progress_arguments if version_meta and version_meta.silent_with_progress_arguments else '' }}"
+    />
+  </div>
+
+  <div class="form-row">
+    <label for="interactive_arguments">
+      <input
+        type="checkbox"
+        name="install_mode_interactive"
+        value="1"
+        {% if version_meta %}
+          {% if version_meta.install_mode_interactive %}checked{% endif %}
+        {% else %}
+          checked
+        {% endif %}
+      />
+      Interactive arguments
+    </label>
     <input
       id="interactive_arguments"
       name="interactive_arguments"
@@ -259,6 +316,47 @@
       type="text"
       value="{{ version_meta.log_arguments if version_meta and version_meta.log_arguments else '' }}"
     />
+  </div>
+
+  <div class="form-row">
+    <label>
+      <input
+        type="checkbox"
+        id="requires_elevation"
+        name="requires_elevation"
+        value="1"
+        {% if version_meta and version_meta.requires_elevation %}checked{% endif %}
+      />
+      Requires elevation (run as administrator)
+    </label>
+  </div>
+
+  <div class="form-row">
+    <label for="package_dependencies">Package dependencies</label>
+    <input
+      id="package_dependencies_filter"
+      type="text"
+      placeholder="Filter packages..."
+    />
+    <select
+      id="package_dependencies"
+      name="package_dependencies"
+      multiple
+      size="6"
+    >
+      {% for pid in all_package_ids %}
+      <option
+        value="{{ pid }}"
+        {% if version_meta and version_meta.package_dependencies and pid in version_meta.package_dependencies %}selected{% endif %}
+      >
+        {{ pid }}
+      </option>
+      {% endfor %}
+    </select>
+    <p class="hint">
+      Select zero or more packages that this version depends on. Use Ctrl/Shift
+      to select multiple entries.
+    </p>
   </div>
 
 </form>

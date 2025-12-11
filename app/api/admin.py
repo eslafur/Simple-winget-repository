@@ -73,27 +73,26 @@ async def _save_upload_and_hash(upload: UploadFile, target_dir: Path) -> tuple[s
 
 def _build_custom_installer_package(
     version_dir: Path,
-    installer_file_name: str,
-    steps: List[CustomInstallerStep],
+    meta: VersionMetadata,
 ) -> str:
     """
-    Generate install.bat from the configured steps and package it together
-    with the uploaded installer into package.zip. Returns the SHA256 of the zip.
-    """
-    # Ensure we always have at least one step that runs the installer.
-    if not steps:
-        steps = [CustomInstallerStep(action_type="run_installer")]
+    Generate install.bat from the configured steps in the VersionMetadata and
+    package it together with the uploaded installer into package.zip.
 
-    script_text = custom_installer.render_install_script(steps, installer_file_name)
+    Returns the SHA256 of the resulting zip archive.
+    """
+    script_text = custom_installer.render_install_script(
+        meta=meta,
+    )
     script_path = version_dir / "install.bat"
     # Use CRLF endings and UTF-8.
     script_path.write_text(script_text, encoding="utf-8", newline="\r\n")
 
     package_zip_path = version_dir / "package.zip"
     with zipfile.ZipFile(package_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        installer_path = version_dir / installer_file_name
+        installer_path = version_dir / meta.installer_file
         if installer_path.is_file():
-            zf.write(installer_path, arcname=installer_file_name)
+            zf.write(installer_path, arcname=meta.installer_file)
         zf.write(script_path, arcname="install.bat")
 
     hasher = hashlib.sha256()
@@ -336,6 +335,7 @@ async def admin_version_form_fragment(
     """
     _get_package_or_404(package_id)
     config = get_repository_config()
+    index = get_repository_index()
     
     # Decode URL-encoded version_id
     version_id = urllib.parse.unquote(version_id)
@@ -351,7 +351,10 @@ async def admin_version_form_fragment(
         clone_from = urllib.parse.unquote(clone_from)
         source_version = _get_version_by_id(package_id, clone_from)
         if source_version:
-            # Create a copy with version and installer_file cleared
+            # Create a copy with version and installer_file cleared. All other
+            # metadata (including nested installers, custom steps, product
+            # code, install modes, dependencies, etc.) is cloned so a new
+            # version can be quickly created from an existing one.
             cloned_meta = VersionMetadata(
                 version="",  # Empty for new version
                 architecture=source_version.architecture,
@@ -360,8 +363,20 @@ async def admin_version_form_fragment(
                 installer_file=None,  # Empty - user must upload
                 installer_sha256=None,
                 silent_arguments=source_version.silent_arguments,
+                silent_with_progress_arguments=getattr(
+                    source_version, "silent_with_progress_arguments", None
+                ),
                 interactive_arguments=source_version.interactive_arguments,
                 log_arguments=source_version.log_arguments,
+                nested_installer_type=source_version.nested_installer_type,
+                nested_installer_files=source_version.nested_installer_files,
+                custom_installer_steps=source_version.custom_installer_steps,
+                product_code=source_version.product_code,
+                install_mode_interactive=source_version.install_mode_interactive,
+                install_mode_silent=source_version.install_mode_silent,
+                install_mode_silent_with_progress=source_version.install_mode_silent_with_progress,
+                requires_elevation=source_version.requires_elevation,
+                package_dependencies=source_version.package_dependencies,
                 release_date=None,
                 release_notes=None,
             )
@@ -381,6 +396,7 @@ async def admin_version_form_fragment(
             "installer_type_options": config.installer_type_options,
             "nested_installer_type_options": config.nested_installer_type_options,
             "custom_actions": custom_installer.get_available_actions(),
+            "all_package_ids": sorted(index.packages.keys()),
         },
     )
 
@@ -392,8 +408,10 @@ async def admin_save_version(
     version: str = Form(...),
     architecture: str = Form(...),
     scope: str = Form(...),
+    product_code: str = Form(...),
     installer_type: str = Form("exe"),
     silent_arguments: str = Form(""),
+    silent_with_progress_arguments: str = Form(""),
     interactive_arguments: str = Form(""),
     log_arguments: str = Form(""),
     nested_installer_type: Optional[str] = Form(default=None),
@@ -404,6 +422,13 @@ async def admin_save_version(
     custom_action_type: List[str] = Form(default=[]),
     custom_arg1: List[str] = Form(default=[]),
     custom_arg2: List[str] = Form(default=[]),
+    # Install modes and elevation
+    install_mode_interactive: bool = Form(True),
+    install_mode_silent: bool = Form(True),
+    install_mode_silent_with_progress: bool = Form(True),
+    requires_elevation: bool = Form(False),
+    # Package dependencies (logical)
+    package_dependencies: List[str] = Form(default=[]),
     upload: UploadFile | None = File(default=None),
 ) -> JSONResponse:
     """
@@ -539,35 +564,47 @@ async def admin_save_version(
                 )
             )
 
-        # For custom installers, build or rebuild the package.zip and compute
-        # the SHA256 of the zip (which is what WinGet will download).
-        if not installer_file_name:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "Installer file is required for custom installer versions"},
-            )
-        installer_sha256 = _build_custom_installer_package(
-            version_dir=version_dir,
-            installer_file_name=installer_file_name,
-            steps=custom_steps,
-        )
+    # Normalize package dependency identifiers
+    normalized_dependencies = [d.strip() for d in package_dependencies if d.strip()]
 
+    # Build the VersionMetadata object once and pass it through to helper
+    # functions instead of plumbing individual fields repeatedly.
     meta = VersionMetadata(
         version=version,
         architecture=architecture,
         scope=scope,
+        product_code=product_code or None,
         installer_type=installer_type,
         installer_file=installer_file_name,
         installer_sha256=installer_sha256,
         silent_arguments=silent_arguments or None,
+        silent_with_progress_arguments=silent_with_progress_arguments or None,
         interactive_arguments=interactive_arguments or None,
         log_arguments=log_arguments or None,
+        install_mode_interactive=install_mode_interactive,
+        install_mode_silent=install_mode_silent,
+        install_mode_silent_with_progress=install_mode_silent_with_progress,
+        requires_elevation=requires_elevation,
+        package_dependencies=normalized_dependencies,
         nested_installer_type=nested_type_value,
         nested_installer_files=nested_files_value,
         custom_installer_steps=custom_steps if installer_type == "custom" else [],
         release_date=existing_version.release_date if existing_version else None,
         release_notes=existing_version.release_notes if existing_version else None,
     )
+
+    # For custom installers, build or rebuild the package.zip and compute
+    # the SHA256 of the zip (which is what WinGet will download).
+    if installer_type == "custom":
+        if not meta.installer_file:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Installer file is required for custom installer versions"},
+            )
+        meta.installer_sha256 = _build_custom_installer_package(
+            version_dir=version_dir,
+            meta=meta,
+        )
     
     version_json.write_text(meta.model_dump_json(indent=2), encoding="utf-8")
     build_index_from_disk()

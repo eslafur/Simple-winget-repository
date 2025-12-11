@@ -103,20 +103,35 @@ class RepositoryConfig(BaseModel):
         description="Valid scope values for installers.",
     )
     installer_type_options: List[str] = Field(
-        default_factory=lambda: ["exe", "msi", "msix", "zip", "custom"],
-        description="Valid installer types.",
-    )
-    nested_installer_type_options: List[str] = Field(
         default_factory=lambda: [
-            "portable",
-            "exe",
-            "msi",
             "msix",
+            "msi",
             "appx",
+            "exe",
+            "zip",
             "inno",
             "nullsoft",
             "wix",
             "burn",
+            "pwa",
+            "portable",
+            "font",
+            "custom",
+        ],
+        description="Valid installer types.",
+    )
+    nested_installer_type_options: List[str] = Field(
+        default_factory=lambda: [
+            "msix",
+            "msi",
+            "appx",
+            "exe",
+            "inno",
+            "nullsoft",
+            "wix",
+            "burn",
+            "portable",
+            "font",
         ],
         description="Valid NestedInstallerType values for zip installers.",
     )
@@ -180,8 +195,36 @@ class VersionMetadata(BaseModel):
     )
     installer_sha256: Optional[str] = None
     silent_arguments: Optional[str] = None
+    # Optional separate arguments for the SilentWithProgress mode. If not
+    # provided, silent_arguments will be reused when building the manifest.
+    silent_with_progress_arguments: Optional[str] = None
     interactive_arguments: Optional[str] = None
     log_arguments: Optional[str] = None
+
+    # Additional version-specific metadata used by WinGet but not previously
+    # stored explicitly.
+    #
+    # ProductCode is required by WinGet for MSI-style installers, but we treat
+    # it as optional in the data model for backwards compatibility. The admin
+    # UI enforces it as required when editing/creating versions.
+    product_code: Optional[str] = None
+
+    # InstallModes are represented as three booleans which control the list of
+    # modes emitted into the WinGet manifest. Defaults preserve the previous
+    # behavior where all three modes were always advertised.
+    install_mode_interactive: bool = True
+    install_mode_silent: bool = True
+    install_mode_silent_with_progress: bool = True
+
+    # Whether this installer requires elevation/administrator rights.
+    requires_elevation: bool = False
+
+    # Logical package dependencies (mapped into Dependencies.PackageDependencies
+    # in the WinGet manifest).
+    package_dependencies: List[str] = Field(
+        default_factory=list,
+        description="List of package identifiers this version depends on.",
+    )
 
     # Nested installer metadata (used when installer_type == 'zip').
     nested_installer_type: Optional[str] = None
