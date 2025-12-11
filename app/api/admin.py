@@ -12,6 +12,7 @@ from app.data.models import PackageCommonMetadata, VersionMetadata
 from app.data.repository import (
     get_data_dir,
     get_repository_index,
+    get_repository_config,
     build_index_from_disk,
 )
 
@@ -233,11 +234,16 @@ async def admin_new_version_form(
     # Ensure package exists; will 404 otherwise.
     _get_package_or_404(package_id)
 
+    config = get_repository_config()
+
     return templates.TemplateResponse(
         "admin_version_new.html",
         {
             "request": request,
             "package_id": package_id,
+            "architecture_options": config.architecture_options,
+            "scope_options": config.scope_options,
+            "installer_type_options": config.installer_type_options,
         },
     )
 
@@ -316,6 +322,7 @@ async def admin_edit_version(
     Admin UI: edit a specific version's metadata.
     """
     v = _get_version_or_404(package_id, version)
+    config = get_repository_config()
 
     return templates.TemplateResponse(
         "admin_version_detail.html",
@@ -323,6 +330,9 @@ async def admin_edit_version(
             "request": request,
             "package_id": package_id,
             "version_meta": v,
+            "architecture_options": config.architecture_options,
+            "scope_options": config.scope_options,
+            "installer_type_options": config.installer_type_options,
         },
     )
 

@@ -20,34 +20,31 @@ Repository{% endblock %}
 
     <div class="form-row">
       <label for="architecture">Architecture</label>
-      <input
-        id="architecture"
-        name="architecture"
-        type="text"
-        placeholder="x86, x64, arm64"
-        required
-      />
+      <select id="architecture" name="architecture" required>
+        {% for opt in architecture_options %}
+        <option value="{{ opt }}">{{ opt }}</option>
+        {% endfor %}
+      </select>
     </div>
 
     <div class="form-row">
       <label for="scope">Scope</label>
-      <input
-        id="scope"
-        name="scope"
-        type="text"
-        placeholder="user or machine"
-        required
-      />
+      <select id="scope" name="scope" required>
+        {% for opt in scope_options %}
+        <option value="{{ opt }}">{{ opt }}</option>
+        {% endfor %}
+      </select>
     </div>
 
     <div class="form-row">
       <label for="installer_type">Installer type</label>
-      <input
-        id="installer_type"
-        name="installer_type"
-        type="text"
-        value="exe"
-      />
+      <select id="installer_type" name="installer_type">
+        {% for opt in installer_type_options %}
+        <option value="{{ opt }}" {% if opt == 'exe' %}selected{% endif %}>
+          {{ opt }}
+        </option>
+        {% endfor %}
+      </select>
     </div>
 
     <div class="form-row">

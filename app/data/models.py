@@ -6,6 +6,34 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+class SourceAgreement(BaseModel):
+    agreement_label: str
+    agreement: str
+    agreement_url: Optional[str] = None
+
+
+class SourceAgreementsConfig(BaseModel):
+    agreements_identifier: str = Field(
+        default="agreements-v1",
+        description="Identifier for the current set of source agreements.",
+    )
+    agreements: List[SourceAgreement] = Field(
+        default_factory=list,
+        description="List of agreements shown to the user when adding the source.",
+    )
+
+
+class AuthenticationConfig(BaseModel):
+    authentication_type: str = Field(
+        default="none",
+        description="Authentication type for this REST source (none or microsoftEntraId).",
+    )
+    microsoft_entra_id_authentication_info: Optional[dict] = Field(
+        default=None,
+        description="Additional configuration when authentication_type is microsoftEntraId.",
+    )
+
+
 class RepositoryConfig(BaseModel):
     """
     Top-level configuration describing the repository itself.
@@ -33,6 +61,51 @@ class RepositoryConfig(BaseModel):
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         description="Timestamp when this repository configuration was first created.",
+    )
+    # Additional fields used to populate the /information endpoint for the
+    # WinGet REST source contract.
+    source_agreements: Optional[SourceAgreementsConfig] = Field(
+        default=None,
+        description="Optional agreements that are presented to the user.",
+    )
+    server_supported_versions: List[str] = Field(
+        default_factory=lambda: ["1.0.0"],
+        description="WinGet REST API contract versions supported by this server.",
+    )
+    unsupported_package_match_fields: List[str] = Field(
+        default_factory=lambda: ["NormalizedPackageNameAndPublisher"],
+        description="Package match fields that this source does not support.",
+    )
+    required_package_match_fields: List[str] = Field(
+        default_factory=list,
+        description="Package match fields that this source requires.",
+    )
+    unsupported_query_parameters: List[str] = Field(
+        default_factory=lambda: ["Market"],
+        description="Query parameters that this source does not support.",
+    )
+    required_query_parameters: List[str] = Field(
+        default_factory=list,
+        description="Query parameters that this source requires.",
+    )
+    authentication: AuthenticationConfig = Field(
+        default_factory=AuthenticationConfig,
+        description="Authentication configuration for this REST source.",
+    )
+    # Option lists used by the admin UI to constrain and validate fields that
+    # are effectively enums in the WinGet manifest contract. These are NOT
+    # exposed to the WinGet client; they are internal repository configuration.
+    architecture_options: List[str] = Field(
+        default_factory=lambda: ["x86", "x64", "arm64"],
+        description="Valid architectures for installers.",
+    )
+    scope_options: List[str] = Field(
+        default_factory=lambda: ["user", "machine"],
+        description="Valid scope values for installers.",
+    )
+    installer_type_options: List[str] = Field(
+        default_factory=lambda: ["exe", "msi", "msix", "zip"],
+        description="Valid installer types.",
     )
 
 
