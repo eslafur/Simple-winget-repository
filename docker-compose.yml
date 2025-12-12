@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: simple-winget-repository
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist repository and authentication JSON data
+      - ./data:/data
+    environment:
+      # Optional: override data dir via env if you ever change layout
+      - WINGET_REPO_DATA_DIR=/data
+    restart: unless-stopped
+
+
