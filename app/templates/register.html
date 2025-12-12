@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Register | winget REST Repository{% endblock %}
+
+{% block content %}
+<section class="auth-section">
+  <h2>Admin Registration</h2>
+  <p>Create an admin account. Passwords are stored as SHA256 hashes with per-user salts.</p>
+
+  {% if error %}
+  <div class="alert alert-error">
+    {{ error }}
+  </div>
+  {% endif %}
+
+  <form method="post" action="/register" class="auth-form">
+    <div class="form-row">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" required />
+    </div>
+
+    <div class="form-row">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required />
+    </div>
+
+    <div class="form-row">
+      <label for="confirm_password">Confirm password</label>
+      <input
+        type="password"
+        id="confirm_password"
+        name="confirm_password"
+        required
+      />
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="button-primary">Register</button>
+    </div>
+  </form>
+</section>
+{% endblock %}
+
+

@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.data.repository import initialize_repository
+from app.data.authentication import initialize_authentication
 
 
 app = FastAPI(
@@ -23,9 +24,11 @@ templates = Jinja2Templates(directory="app/templates")
 @app.on_event("startup")
 async def startup_event() -> None:
     """
-    Initialize the JSON-backed repository and build the in-memory index.
+    Initialize the JSON-backed repository, build the in-memory index,
+    and set up authentication storage.
     """
     await initialize_repository()
+    initialize_authentication()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -64,6 +67,14 @@ try:
     from app.api.admin import router as admin_router
 
     app.include_router(admin_router, tags=["admin"])
+except ImportError:
+    pass
+
+# Authentication routes (login/registration/logout)
+try:
+    from app.api.auth import router as auth_router
+
+    app.include_router(auth_router, tags=["auth"])
 except ImportError:
     pass
 

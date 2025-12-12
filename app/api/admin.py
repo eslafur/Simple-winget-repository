@@ -6,15 +6,27 @@ import hashlib
 import urllib.parse
 import zipfile
 
-from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, File, Query
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+from app.data.authentication import SESSION_COOKIE_NAME, get_user_for_session
 from app.data.models import (
     PackageCommonMetadata,
     VersionMetadata,
     NestedInstallerFile,
     CustomInstallerStep,
+    AuthUser,
 )
 from app.data.repository import (
     get_data_dir,
@@ -25,7 +37,36 @@ from app.data.repository import (
 from app import custom_installer
 
 
-router = APIRouter()
+templates = Jinja2Templates(directory="app/templates")
+
+
+async def require_admin_session(request: Request) -> AuthUser:
+    """
+    Dependency that ensures a valid admin session exists.
+
+    For GET requests, unauthenticated callers are redirected to /login.
+    For non-GET requests, a 401 JSON error is returned.
+    """
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    user = get_user_for_session(session_id) if session_id else None
+
+    if user is None:
+        if request.method.upper() == "GET":
+            # Use a redirect for browser navigation.
+            raise HTTPException(
+                status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                headers={"Location": "/login"},
+            )
+        # For XHR/POST calls, return a 401 error so the client can handle it.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    return user
+
+
+router = APIRouter(dependencies=[Depends(require_admin_session)])
 templates = Jinja2Templates(directory="app/templates")
 
 

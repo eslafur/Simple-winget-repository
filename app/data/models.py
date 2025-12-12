@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class SourceAgreement(BaseModel):
@@ -277,5 +277,71 @@ class RepositoryIndex(BaseModel):
 
     packages: Dict[str, PackageIndex] = Field(default_factory=dict)
     last_built_at: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
+# Authentication models (authentication.json)
+# ---------------------------------------------------------------------------
+
+
+class AuthCredential(BaseModel):
+    """
+    One credential entry for a user.
+
+    type:
+      - "cleartext": password stored as plain text (will be normalized to sha256)
+      - "sha256": password field holds the SHA256 hash, salt holds the per-user salt
+    """
+
+    type: str = Field(
+        description='Credential type ("cleartext" or "sha256").',
+    )
+    password: str = Field(
+        description="Password value (clear text or SHA256 hash, depending on type).",
+    )
+    salt: Optional[str] = Field(
+        default=None,
+        description="Per-user salt used when type == 'sha256'.",
+    )
+
+
+class AuthUser(BaseModel):
+    """
+    User entry in authentication.json.
+    """
+
+    username: str
+    authentications: List[AuthCredential] = Field(
+        default_factory=list,
+        description="List of credential entries for this user.",
+    )
+
+
+class AuthSession(BaseModel):
+    """
+    Session entry in authentication.json.
+    """
+
+    # Use alias "last-login" in JSON to match the requested field name.
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: str
+    last_login: datetime = Field(
+        alias="last-login",
+        serialization_alias="last-login",
+        description="Timestamp of the last successful login for this session.",
+    )
+    username: str
+
+
+class AuthenticationStore(BaseModel):
+    """
+    Root object persisted to <DATA_DIR>/authentication.json.
+
+    Contains separate user and session lists.
+    """
+
+    users: List[AuthUser] = Field(default_factory=list)
+    sessions: List[AuthSession] = Field(default_factory=list)
 
 
