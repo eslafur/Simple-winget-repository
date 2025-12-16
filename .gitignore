@@ -13,6 +13,3 @@ env/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
-
-# temp tocumentation for autocomplete
-AI-helperDocumentation/

@@ -1,0 +1,156 @@
+{% include "modal_form_helpers.html" %}
+
+{# Used for both create + edit. When editing, package_id is read-only and fields are pre-populated. #}
+<form
+  id="cached-package-form"
+  method="post"
+  class="form"
+  data-submit-endpoint="{% if package %}/admin/cached-packages/{{ package.package_identifier }}{% else %}/admin/cached-packages/new{% endif %}"
+>
+  <!-- Text Field -->
+  <div class="modal-form-group">
+    <label for="package_id">Package ID <span class="required">*</span></label>
+    <input type="text" id="package_id" name="package_id" required 
+           placeholder="e.g., Microsoft.WindowsTerminal"
+           pattern="[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9]|[A-Za-z0-9]"
+           value="{{ package.package_identifier if package else '' }}"
+           {% if package %}readonly{% endif %}>
+    <small>Enter the WinGet package identifier (e.g., Microsoft.WindowsTerminal)</small>
+    {% if package %}
+    <small>Package identifier cannot be changed after creation.</small>
+    {% endif %}
+  </div>
+
+  <!-- Multi-select: Architectures -->
+  <div class="modal-form-group">
+    <label class="filter-toggle-label">
+      <input
+        type="checkbox"
+        id="filter-architectures"
+        class="filter-toggle"
+        data-group-id="architectures-group"
+        {% if package and package.cache_settings and package.cache_settings.architectures %}checked{% endif %}
+      >
+      Filter Architectures
+    </label>
+    <div
+      class="modal-multiselect-group"
+      id="architectures-group"
+      data-multi-select="architectures"
+      {% if not package or not package.cache_settings or not package.cache_settings.architectures %}style="display: none;"{% endif %}
+    >
+      {% for arch in architectures %}
+      <label class="modal-checkbox-label">
+        <input
+          type="checkbox"
+          value="{{ arch }}"
+          {% if package and package.cache_settings and arch in package.cache_settings.architectures %}checked{% endif %}
+        >
+        {{ arch }}
+      </label>
+      {% endfor %}
+    </div>
+    <small>Select architectures to include (check filter to enable filtering)</small>
+  </div>
+
+  <!-- Multi-select: Scopes -->
+  <div class="modal-form-group">
+    <label class="filter-toggle-label">
+      <input
+        type="checkbox"
+        id="filter-scopes"
+        class="filter-toggle"
+        data-group-id="scopes-group"
+        {% if package and package.cache_settings and package.cache_settings.scopes %}checked{% endif %}
+      >
+      Filter Scopes
+    </label>
+    <div
+      class="modal-multiselect-group"
+      id="scopes-group"
+      data-multi-select="scopes"
+      {% if not package or not package.cache_settings or not package.cache_settings.scopes %}style="display: none;"{% endif %}
+    >
+      {% for scope in scopes %}
+      <label class="modal-checkbox-label">
+        <input
+          type="checkbox"
+          value="{{ scope }}"
+          {% if package and package.cache_settings and scope in package.cache_settings.scopes %}checked{% endif %}
+        >
+        {{ scope }}
+      </label>
+      {% endfor %}
+    </div>
+    <small>Select scopes to include (check filter to enable filtering)</small>
+  </div>
+
+  <!-- Multi-select: Installer Types -->
+  <div class="modal-form-group">
+    <label class="filter-toggle-label">
+      <input
+        type="checkbox"
+        id="filter-installer-types"
+        class="filter-toggle"
+        data-group-id="installer-types-group"
+        {% if package and package.cache_settings and package.cache_settings.installer_types %}checked{% endif %}
+      >
+      Filter Installer Types
+    </label>
+    <div
+      class="modal-multiselect-group"
+      id="installer-types-group"
+      data-multi-select="installer_types"
+      {% if not package or not package.cache_settings or not package.cache_settings.installer_types %}style="display: none;"{% endif %}
+    >
+      {% for inst_type in installer_types %}
+      <label class="modal-checkbox-label">
+        <input
+          type="checkbox"
+          value="{{ inst_type }}"
+          {% if package and package.cache_settings and package.cache_settings.installer_types and inst_type in package.cache_settings.installer_types %}checked{% endif %}
+        >
+        {{ inst_type }}
+      </label>
+      {% endfor %}
+    </div>
+    <small>Select installer types to include (check filter to enable filtering)</small>
+  </div>
+
+  <!-- Dropdown: Version Mode -->
+  <div class="modal-form-group">
+    <label for="version_mode">Version Mode</label>
+    <select id="version_mode" name="version_mode">
+      <option value="latest" {% if not package or not package.cache_settings or package.cache_settings.version_mode == "latest" %}selected{% endif %}>Latest only</option>
+      <option value="all" {% if package and package.cache_settings and package.cache_settings.version_mode == "all" %}selected{% endif %}>All versions</option>
+    </select>
+    <small>Latest: only cache latest version per architecture/scope/type. All: cache all matching versions.</small>
+  </div>
+
+  <!-- Text Field: Version Filter -->
+  <div class="modal-form-group">
+    <label for="version_filter">Version Filter (optional)</label>
+    <input type="text" id="version_filter" name="version_filter" 
+           placeholder="e.g., 1.18.*"
+           value="{{ package.cache_settings.version_filter if package and package.cache_settings and package.cache_settings.version_filter else '' }}">
+    <small>Wildcard pattern to filter versions (e.g., "1.18.*" for all 1.18.x versions)</small>
+  </div>
+</form>
+
+<style>
+.filter-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+  cursor: pointer;
+  margin-bottom: 0.5rem;
+}
+
+.filter-toggle-label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+</style>
+
+

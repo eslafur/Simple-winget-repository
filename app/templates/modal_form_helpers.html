@@ -1,0 +1,155 @@
+<!--
+  Reusable form field helpers for modal forms.
+  Include this file in form fragments to get standardized form field components.
+-->
+
+<style>
+/* Form field styles */
+.modal-form-group {
+  margin-bottom: 1.5rem;
+}
+
+.modal-form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.modal-form-group small {
+  display: block;
+  margin-top: 0.25rem;
+  color: #666;
+  font-size: 0.875rem;
+}
+
+.modal-form-group .required {
+  color: #d32f2f;
+}
+
+/* Checkbox group styles */
+.modal-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.modal-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.modal-checkbox-label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Multi-select list styles */
+.modal-multiselect-group {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 0.5rem;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-top: 0.5rem;
+}
+
+.modal-multiselect-group .modal-checkbox-group {
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Text input styles */
+.modal-form-group input[type="text"],
+.modal-form-group input[type="email"],
+.modal-form-group input[type="url"],
+.modal-form-group input[type="number"],
+.modal-form-group textarea,
+.modal-form-group select {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+.modal-form-group textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.modal-form-group select {
+  cursor: pointer;
+}
+</style>
+
+<script>
+/**
+ * Initialize form fields when modal content loads.
+ * This handles:
+ * - Multi-select fields (updating hidden fields on checkbox change)
+ * - Form-specific submit endpoints
+ */
+(function() {
+  const originalOnModalContentLoaded = window.onModalContentLoaded;
+  
+  window.onModalContentLoaded = function(modalBody) {
+    const form = modalBody.querySelector('form');
+    
+    if (form) {
+      // Set form-specific submit endpoint if specified
+      const formEndpoint = form.dataset.submitEndpoint;
+      if (formEndpoint) {
+        const modal = document.getElementById('modal');
+        modal.setAttribute('data-submit-endpoint', formEndpoint);
+      }
+      
+      // Initialize multi-select fields
+      initializeMultiSelectFields(form);
+    }
+    
+    // Call original hook if it exists
+    if (originalOnModalContentLoaded) {
+      originalOnModalContentLoaded(modalBody);
+    }
+  };
+  
+  /**
+   * Initialize multi-select fields: set up event listeners to update hidden fields
+   */
+  function initializeMultiSelectFields(form) {
+    form.querySelectorAll('[data-multi-select]').forEach(group => {
+      const fieldName = group.dataset.multiSelect;
+      
+      // Find or create hidden field
+      let hiddenField = form.querySelector(`input[type="hidden"][name="${fieldName}"]`);
+      if (!hiddenField) {
+        hiddenField = document.createElement('input');
+        hiddenField.type = 'hidden';
+        hiddenField.name = fieldName;
+        form.appendChild(hiddenField);
+      }
+      
+      // Function to update hidden field
+      function updateHiddenField() {
+        const checkboxes = group.querySelectorAll('input[type="checkbox"]:checked');
+        const values = Array.from(checkboxes)
+          .map(cb => cb.value.trim())
+          .filter(v => v.length > 0);
+        hiddenField.value = values.join(',');
+      }
+      
+      // Add change listeners to all checkboxes in this group
+      group.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+        checkbox.addEventListener('change', updateHiddenField);
+      });
+      
+      // Initialize with current values
+      updateHiddenField();
+    });
+  }
+})();
+</script>
+

@@ -1,11 +1,14 @@
+{% include "modal_form_helpers.html" %}
+
 <form
   method="post"
   class="form"
   enctype="multipart/form-data"
   data-package-id="{{ package_id }}"
+  data-submit-endpoint="{% if package %}/admin/packages/{{ package_id }}{% else %}/admin/packages/new{% endif %}"
 >
-  <div class="form-row">
-    <label for="package_identifier">Identifier</label>
+  <div class="modal-form-group">
+    <label for="package_identifier">Identifier{% if not package %} <span class="required">*</span>{% endif %}</label>
     <input
       id="package_identifier"
       name="package_identifier"
@@ -14,12 +17,12 @@
       {% if package %}readonly{% else %}required{% endif %}
     />
     {% if package %}
-    <p class="hint">Package identifier cannot be changed after creation.</p>
+    <small>Package identifier cannot be changed after creation.</small>
     {% endif %}
   </div>
 
-  <div class="form-row">
-    <label for="package_name">Name</label>
+  <div class="modal-form-group">
+    <label for="package_name">Name <span class="required">*</span></label>
     <input
       id="package_name"
       name="package_name"
@@ -29,8 +32,8 @@
     />
   </div>
 
-  <div class="form-row">
-    <label for="publisher">Publisher</label>
+  <div class="modal-form-group">
+    <label for="publisher">Publisher <span class="required">*</span></label>
     <input
       id="publisher"
       name="publisher"
@@ -40,7 +43,7 @@
     />
   </div>
 
-  <div class="form-row">
+  <div class="modal-form-group">
     <label for="short_description">Short description</label>
     <textarea
       id="short_description"
@@ -49,7 +52,7 @@
     >{{ package.short_description if package and package.short_description else '' }}</textarea>
   </div>
 
-  <div class="form-row">
+  <div class="modal-form-group">
     <label for="license">License</label>
     <input
       id="license"
@@ -59,7 +62,7 @@
     />
   </div>
 
-  <div class="form-row">
+  <div class="modal-form-group">
     <label for="tags">Tags (comma separated)</label>
     <input
       id="tags"
@@ -67,6 +70,7 @@
       type="text"
       value="{{ package.tags | join(', ') if package and package.tags else '' }}"
     />
+    <small>Enter tags separated by commas</small>
   </div>
 </form>
 

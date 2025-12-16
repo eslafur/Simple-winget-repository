@@ -92,7 +92,8 @@ async function submitModal() {
   }
   
   const modal = document.getElementById('modal');
-  const submitEndpoint = modal.getAttribute('data-submit-endpoint');
+  // Check for form-specific endpoint, fallback to modal endpoint
+  const submitEndpoint = currentForm.dataset.submitEndpoint || modal.getAttribute('data-submit-endpoint');
   const submitButton = document.getElementById('modal-submit');
   const progressContainer = document.getElementById('upload-progress-container');
   const progressFill = document.getElementById('upload-progress-fill');
@@ -120,6 +121,9 @@ async function submitModal() {
     alert('No submit endpoint configured');
     return;
   }
+  
+  // Process multi-select fields before creating FormData
+  processMultiSelectFields(currentForm);
   
   const formData = new FormData(currentForm);
   
@@ -172,6 +176,33 @@ async function submitModal() {
       progressContainer.classList.add('hidden');
     }
   }
+}
+
+/**
+ * Process multi-select fields: update hidden fields with comma-separated values
+ * This handles fields marked with data-multi-select="true"
+ */
+function processMultiSelectFields(form) {
+  // Find all multi-select groups
+  form.querySelectorAll('[data-multi-select]').forEach(group => {
+    const fieldName = group.dataset.multiSelect;
+    const checkboxes = group.querySelectorAll('input[type="checkbox"]:checked');
+    const values = Array.from(checkboxes)
+      .map(cb => cb.value.trim())
+      .filter(v => v.length > 0);
+    
+    // Find or create hidden field
+    let hiddenField = form.querySelector(`input[type="hidden"][name="${fieldName}"]`);
+    if (!hiddenField) {
+      hiddenField = document.createElement('input');
+      hiddenField.type = 'hidden';
+      hiddenField.name = fieldName;
+      form.appendChild(hiddenField);
+    }
+    
+    // Set comma-separated value (empty string if none selected)
+    hiddenField.value = values.join(',');
+  });
 }
 
 function submitWithProgress(endpoint, formData, progressFill, progressText) {

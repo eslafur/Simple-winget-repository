@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 import hashlib
+import os
 import urllib.parse
 import zipfile
 
@@ -34,6 +36,11 @@ from app.data.repository import (
     get_repository_config,
     build_index_from_disk,
 )
+from app.data.winget_index import WinGetIndexReader
+from app.data.winget_importer import WinGetPackageImporter
+from app.data.models import CacheSettings
+from app.data.winget_index_status import get_index_status_store
+from app.data.winget_index_downloader import download_winget_index
 from app import custom_installer
 
 
@@ -153,29 +160,83 @@ def _build_custom_installer_package(
 async def admin_list_packages(request: Request) -> HTMLResponse:
     """
     Admin UI: list all packages with id, name and latest version.
+    Also shows cached WinGet packages below.
     """
     index = get_repository_index()
 
-    packages = []
+    owned_packages = []
     for package_id, pkg_index in sorted(index.packages.items()):
+        # Skip cached packages in the owned list
+        if getattr(pkg_index.package, "cached", False):
+            continue
         versions = sorted(
             {v.version for v in pkg_index.versions if v.version},
             reverse=True,
         )
         latest_version: Optional[str] = versions[0] if versions else None
-        packages.append(
+        owned_packages.append(
             {
                 "id": package_id,
                 "name": pkg_index.package.package_name,
                 "latest_version": latest_version,
             }
         )
+    
+    # Get WinGet index status
+    index_status_store = get_index_status_store()
+    index_status = index_status_store.get_status()
+    
+    # Check if index file exists but status hasn't been set
+    index_path = _get_winget_index_path()
+    if index_path.exists() and not index_status.last_pulled:
+        # Index exists but status not tracked - check file modification time
+        try:
+            mtime = os.path.getmtime(index_path)
+            index_status.last_pulled = datetime.fromtimestamp(mtime)
+            index_status_store.update_pulled_time(index_path=index_path)
+        except Exception:
+            pass
+    
+    index_last_pulled = index_status.last_pulled.strftime('%Y-%m-%d %H:%M:%S') if index_status.last_pulled else None
+    
+    # Cached packages: derive from repository index (packages with cached=True)
+    repo_index = get_repository_index()
+    cached_packages_data = []
+    for pkg_id, pkg_index in repo_index.packages.items():
+        pkg_meta = pkg_index.package
+        if not getattr(pkg_meta, "cached", False):
+            continue
+        latest_version = None
+        version_count = len(pkg_index.versions)
+        if pkg_index.versions:
+            sorted_versions = sorted(
+                pkg_index.versions,
+                key=lambda v: v.version,
+                reverse=True
+            )
+            latest_version = sorted_versions[0].version
+        cs = pkg_meta.cache_settings
+        cached_packages_data.append({
+            "package_id": pkg_meta.package_identifier,
+            "package_name": pkg_meta.package_name,
+            "publisher": pkg_meta.publisher,
+            "latest_version": latest_version,
+            "filters": {
+                "architectures": ", ".join(cs.architectures) if cs and cs.architectures else "All",
+                "scopes": ", ".join(cs.scopes) if cs and cs.scopes else "All",
+                "installer_types": ", ".join(cs.installer_types) if cs and cs.installer_types else "All",
+                "version_mode": cs.version_mode if cs else "latest",
+            },
+            "version_count": version_count,
+        })
 
     return templates.TemplateResponse(
         "admin_packages.html",
         {
             "request": request,
-            "packages": packages,
+            "owned_packages": owned_packages,
+            "cached_packages": cached_packages_data,
+            "index_last_pulled": index_last_pulled,
         },
     )
 
@@ -270,7 +331,7 @@ async def admin_create_package(
             content={"error": "Package already exists"},
         )
     
-    pkg_dir = data_dir / package_identifier
+    pkg_dir = data_dir / "owned" / package_identifier
     pkg_dir.mkdir(parents=True, exist_ok=True)
     
     package_json = pkg_dir / "package.json"
@@ -282,6 +343,8 @@ async def admin_create_package(
         short_description=short_description or None,
         license=license or None,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
+        cached=False,
+        cache_settings=None,
     )
     
     package_json.write_text(new_package.model_dump_json(indent=2), encoding="utf-8")
@@ -318,7 +381,7 @@ async def admin_save_package(
             content={"error": "Package identifier mismatch"},
         )
 
-    pkg_dir = data_dir / package_id
+    pkg_dir = data_dir / "owned" / package_id
     pkg_dir.mkdir(parents=True, exist_ok=True)
 
     package_json = pkg_dir / "package.json"
@@ -336,6 +399,8 @@ async def admin_save_package(
             homepage=current.homepage,
             support_url=current.support_url,
             is_example=current.is_example,
+            cached=current.cached,
+            cache_settings=current.cache_settings,
         )
     else:
         # Create new
@@ -346,6 +411,8 @@ async def admin_save_package(
             short_description=short_description or None,
             license=license or None,
             tags=[t.strip() for t in tags.split(",") if t.strip()],
+            cached=False,
+            cache_settings=None,
         )
 
     package_json.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
@@ -500,7 +567,7 @@ async def admin_save_version(
     
     # Compute directory name from form data
     dir_name = f"{version}-{architecture}-{scope}"
-    package_dir = data_dir / package_id
+    package_dir = data_dir / "owned" / package_id
     version_dir = package_dir / dir_name
     
     # Handle installer upload
@@ -732,4 +799,664 @@ async def admin_delete_package(
     return JSONResponse(
         status_code=200,
         content={"success": True, "message": "Package deleted successfully"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# WinGet Import Endpoints
+# ---------------------------------------------------------------------------
+
+
+def _get_winget_index_path() -> Path:
+    """Get the path to the WinGet index database."""
+    data_dir = get_data_dir()
+    cache_dir = data_dir / "cache"
+    index_path = cache_dir / "winget_index" / "index.db"
+    
+    if not index_path.exists():
+        # Try alternative location
+        index_path = cache_dir / "index.db"
+    
+    return index_path
+
+
+@router.post("/admin/winget-index/update")
+async def admin_update_winget_index() -> JSONResponse:
+    """
+    Force update the WinGet index by downloading the latest version.
+    """
+    try:
+        cache_dir = get_data_dir() / "cache"
+        index_path = await download_winget_index(cache_dir)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "message": "Index updated successfully",
+                "index_path": str(index_path),
+            },
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to update index: {str(e)}"},
+        )
+
+
+@router.get("/admin/winget/search")
+async def admin_winget_search(
+    q: str = Query(..., description="Search query for package ID or name"),
+) -> JSONResponse:
+    """
+    Search for packages in the official WinGet repository index.
+    """
+    index_path = _get_winget_index_path()
+    
+    if not index_path.exists():
+        return JSONResponse(
+            status_code=404,
+            content={"error": "WinGet index not found. Please download it first."},
+        )
+    
+    try:
+        with WinGetIndexReader(index_path) as reader:
+            # Simple search - you may want to enhance this
+            reader.connect()
+            cursor = reader.conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT 
+                    i.id as package_id,
+                    n.name as package_name,
+                    p.publisher as publisher
+                FROM ids i
+                LEFT JOIN names n ON i.id = n.id
+                LEFT JOIN publishers p ON i.id = p.id
+                WHERE i.id LIKE ? OR n.name LIKE ?
+                LIMIT 50
+            """, (f"%{q}%", f"%{q}%"))
+            
+            results = [dict(row) for row in cursor.fetchall()]
+            
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "packages": results},
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Search failed: {str(e)}"},
+        )
+
+
+@router.get("/admin/winget/packages/{package_id}/versions")
+async def admin_winget_package_versions(
+    package_id: str,
+    architecture: Optional[str] = Query(None, description="Filter by architecture (x86, x64, arm64)"),
+    scope: Optional[str] = Query(None, description="Filter by scope (user, machine)"),
+) -> JSONResponse:
+    """
+    Get available versions for a package from the WinGet repository.
+    """
+    index_path = _get_winget_index_path()
+    
+    if not index_path.exists():
+        return JSONResponse(
+            status_code=404,
+            content={"error": "WinGet index not found. Please download it first."},
+        )
+    
+    try:
+        with WinGetIndexReader(index_path) as reader:
+            versions = reader.get_package_versions(
+                package_id,
+                architecture=architecture,
+                scope=scope
+            )
+            
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "versions": versions},
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get versions: {str(e)}"},
+        )
+
+
+@router.post("/admin/winget/packages/{package_id}/import")
+async def admin_winget_import_package(
+    package_id: str,
+    architectures: Optional[str] = Query(None, description="Comma-separated architectures (e.g., 'x64,x86')"),
+    scopes: Optional[str] = Query(None, description="Comma-separated scopes (e.g., 'user,machine')"),
+    installer_types: Optional[str] = Query(None, description="Comma-separated installer types"),
+    version_mode: str = Query("latest", description="'latest' or 'all'"),
+    version_filter: Optional[str] = Query(None, description="Version filter (e.g., '1.18.*')"),
+) -> JSONResponse:
+    """
+    Import a package from the official WinGet repository.
+    """
+    index_path = _get_winget_index_path()
+    
+    if not index_path.exists():
+        return JSONResponse(
+            status_code=404,
+            content={"error": "WinGet index not found. Please download it first."},
+        )
+    
+    # Parse comma-separated values
+    arch_list = [a.strip() for a in architectures.split(",")] if architectures else None
+    scope_list = [s.strip() for s in scopes.split(",")] if scopes else None
+    type_list = [t.strip() for t in installer_types.split(",")] if installer_types else None
+    
+    try:
+        importer = WinGetPackageImporter(index_path)
+        result = await importer.import_package(
+            package_id,
+            architectures=arch_list,
+            scopes=scope_list,
+            installer_types=type_list,
+            version_mode=version_mode,
+            version_filter=version_filter,
+            track_cache=True
+        )
+        importer.close()
+        
+        # Rebuild index to include imported package
+        build_index_from_disk()
+        
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "result": result},
+        )
+    except ValueError as e:
+        return JSONResponse(
+            status_code=400,
+            content={"error": str(e)},
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Import failed: {str(e)}"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Cached Packages Management Endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/admin/cached-packages/new/fragment", response_class=HTMLResponse)
+async def admin_new_cached_package_fragment(request: Request) -> HTMLResponse:
+    """
+    Fragment for adding a new cached package (modal form).
+    """
+    config = get_repository_config()
+    return templates.TemplateResponse(
+        "admin_cached_package_form_fragment.html",
+        {
+            "request": request,
+            "architectures": config.architecture_options,
+            "scopes": config.scope_options,
+            "installer_types": config.installer_type_options,
+        },
+    )
+
+
+@router.post("/admin/cached-packages/new")
+async def admin_new_cached_package(
+    package_id: str = Form(...),
+    architectures: Optional[str] = Form(None),
+    scopes: Optional[str] = Form(None),
+    installer_types: Optional[str] = Form(None),
+    version_mode: str = Form("latest"),
+    version_filter: Optional[str] = Form(None),
+) -> JSONResponse:
+    """
+    Import a new package from WinGet repository and add it to cache.
+    """
+    index_path = _get_winget_index_path()
+    
+    if not index_path.exists():
+        return JSONResponse(
+            status_code=404,
+            content={"error": "WinGet index not found. Please download it first."},
+        )
+    
+    # Parse comma-separated values (empty string means "all" for installer_types)
+    arch_list = [a.strip() for a in architectures.split(",") if a.strip()] if architectures and architectures.strip() else None
+    scope_list = [s.strip() for s in scopes.split(",") if s.strip()] if scopes and scopes.strip() else None
+    # Empty string or None both mean "all types"
+    # Also, if all available types are selected, treat as "all types" (None)
+    type_list = None
+    if installer_types and installer_types.strip():
+        parsed_types = [t.strip() for t in installer_types.split(",") if t.strip()]
+        # Get all available installer types from config
+        config = get_repository_config()
+        all_types = set(config.installer_type_options)
+        selected_types = set(parsed_types)
+        # If all types are selected, treat as None (no filter)
+        if selected_types == all_types:
+            type_list = None
+        else:
+            type_list = parsed_types
+    
+    try:
+        importer = WinGetPackageImporter(index_path)
+        result = await importer.import_package(
+            package_id,
+            architectures=arch_list,
+            scopes=scope_list,
+            installer_types=type_list,
+            version_mode=version_mode,
+            version_filter=version_filter,
+            track_cache=True
+        )
+        importer.close()
+        
+        # Rebuild index to include imported package
+        build_index_from_disk()
+        
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "result": result},
+        )
+    except ValueError as e:
+        return JSONResponse(
+            status_code=400,
+            content={"error": str(e)},
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Import failed: {str(e)}"},
+        )
+
+
+@router.get("/admin/cached-packages/{package_id}", response_class=HTMLResponse)
+async def admin_cached_package_detail(
+    request: Request,
+    package_id: str,
+) -> HTMLResponse:
+    """
+    View and manage a cached package.
+    """
+    config = get_repository_config()
+    
+    # Get cached package from repository index
+    repo_index = get_repository_index()
+    package_index = repo_index.packages.get(package_id)
+    if not package_index or not getattr(package_index.package, "cached", False):
+        raise HTTPException(status_code=404, detail="Cached package not found")
+    
+    cached_versions = sorted(
+        package_index.versions,
+        key=lambda v: (v.version or "", v.architecture or "", v.scope or ""),
+        reverse=True,
+    )
+    
+    return templates.TemplateResponse(
+        "admin_cached_package_detail.html",
+        {
+            "request": request,
+            "title": f"Cached Package: {package_index.package.package_name}",
+            "package": package_index.package,
+            "cached_versions": cached_versions,
+            "architectures": config.architecture_options,
+            "scopes": config.scope_options,
+            "installer_types": config.installer_type_options,
+        },
+    )
+
+
+@router.get("/admin/cached-packages/{package_id}/fragment", response_class=HTMLResponse)
+async def admin_cached_package_form_fragment(
+    request: Request,
+    package_id: str,
+) -> HTMLResponse:
+    """
+    Fragment for editing an existing cached package (modal form).
+    """
+    config = get_repository_config()
+    repo_index = get_repository_index()
+    package_index = repo_index.packages.get(package_id)
+    if not package_index or not getattr(package_index.package, "cached", False):
+        raise HTTPException(status_code=404, detail="Cached package not found")
+
+    return templates.TemplateResponse(
+        "admin_cached_package_form_fragment.html",
+        {
+            "request": request,
+            "package": package_index.package,
+            "architectures": config.architecture_options,
+            "scopes": config.scope_options,
+            "installer_types": config.installer_type_options,
+        },
+    )
+
+
+@router.post("/admin/cached-packages/{package_id}")
+async def admin_save_cached_package(
+    package_id: str,
+    package_id_from_form: str = Form(..., alias="package_id"),
+    architectures: Optional[str] = Form(None),
+    scopes: Optional[str] = Form(None),
+    installer_types: Optional[str] = Form(None),
+    version_mode: str = Form("latest"),
+    version_filter: Optional[str] = Form(None),
+) -> JSONResponse:
+    """
+    Update cache settings for an existing cached package and re-import to apply filters.
+    """
+    # Validate package identifier matches URL parameter
+    if package_id_from_form != package_id:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Package identifier mismatch"},
+        )
+
+    repo_index = get_repository_index()
+    pkg_index = repo_index.packages.get(package_id)
+    if not pkg_index or not getattr(pkg_index.package, "cached", False):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Cached package not found"},
+        )
+
+    # Normalize filters. Empty lists mean "all".
+    arch_list = (
+        [a.strip() for a in architectures.split(",") if a.strip()]
+        if architectures and architectures.strip()
+        else []
+    )
+    scope_list = (
+        [s.strip() for s in scopes.split(",") if s.strip()]
+        if scopes and scopes.strip()
+        else []
+    )
+
+    type_list: List[str] = []
+    if installer_types and installer_types.strip():
+        parsed_types = [t.strip() for t in installer_types.split(",") if t.strip()]
+        config = get_repository_config()
+        all_types = set(config.installer_type_options)
+        selected_types = set(parsed_types)
+        # If all types are selected, treat as empty (no filter)
+        if selected_types != all_types:
+            type_list = parsed_types
+
+    version_mode = (version_mode or "latest").strip() or "latest"
+    if version_mode not in ("latest", "all"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Invalid version_mode (must be 'latest' or 'all')"},
+        )
+
+    version_filter = (version_filter or "").strip() or None
+
+    new_cache_settings = CacheSettings(
+        architectures=arch_list,
+        scopes=scope_list,
+        installer_types=type_list,
+        version_mode=version_mode,
+        version_filter=version_filter,
+        auto_update=pkg_index.package.cache_settings.auto_update
+        if pkg_index.package.cache_settings
+        else True,
+    )
+
+    # Persist updated cache settings to package.json
+    data_dir = get_data_dir()
+    if not pkg_index.storage_path:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Package storage path is not available"},
+        )
+    package_dir = data_dir / pkg_index.storage_path
+    package_json = package_dir / "package.json"
+
+    pkg = pkg_index.package
+    updated_pkg = PackageCommonMetadata(
+        package_identifier=pkg.package_identifier,
+        package_name=pkg.package_name,
+        publisher=pkg.publisher,
+        short_description=pkg.short_description,
+        license=pkg.license,
+        tags=pkg.tags,
+        homepage=pkg.homepage,
+        support_url=pkg.support_url,
+        is_example=pkg.is_example,
+        cached=True,
+        cache_settings=new_cache_settings,
+    )
+    package_json.write_text(updated_pkg.model_dump_json(indent=2), encoding="utf-8")
+
+    # Re-import with new filters to make cached versions reflect updated settings.
+    index_path = _get_winget_index_path()
+    if not index_path.exists():
+        return JSONResponse(
+            status_code=404,
+            content={"error": "WinGet index not found"},
+        )
+
+    try:
+        importer = WinGetPackageImporter(index_path)
+        await importer.import_package(
+            package_id,
+            architectures=arch_list if arch_list else None,
+            scopes=scope_list if scope_list else None,
+            installer_types=type_list if type_list else None,
+            version_mode=version_mode,
+            version_filter=version_filter,
+            track_cache=True,
+        )
+        importer.close()
+
+        build_index_from_disk()
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "message": "Cached package updated successfully"},
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Update failed: {str(e)}"},
+    )
+
+
+@router.post("/admin/cached-packages/{package_id}/update-filters")
+async def admin_cached_package_update_filters(
+    package_id: str,
+    architectures: Optional[str] = Query(None),
+    scopes: Optional[str] = Query(None),
+    installer_types: Optional[str] = Query(None),
+    version_mode: str = Query("latest"),
+    version_filter: Optional[str] = Query(None),
+) -> JSONResponse:
+    """Update filters for a cached package and re-import."""
+    repo_index = get_repository_index()
+    pkg_index = repo_index.packages.get(package_id)
+    if not pkg_index or not getattr(pkg_index.package, "cached", False):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Cached package not found"},
+        )
+    
+    # Parse filters (empty string means "all")
+    arch_list = [a.strip() for a in architectures.split(",") if a.strip()] if architectures and architectures.strip() else []
+    scope_list = [s.strip() for s in scopes.split(",") if s.strip()] if scopes and scopes.strip() else []
+    # Empty string or None both mean "all types"
+    type_list = []
+    if installer_types and installer_types.strip():
+        parsed_types = [t.strip() for t in installer_types.split(",") if t.strip()]
+        # Get all available installer types from config
+        config = get_repository_config()
+        all_types = set(config.installer_type_options)
+        selected_types = set(parsed_types)
+        # If all types are selected, treat as empty (no filter)
+        if selected_types != all_types:
+            type_list = parsed_types
+    
+    # Update cache settings (empty lists mean "all")
+    new_cache_settings = CacheSettings(
+        architectures=arch_list,
+        scopes=scope_list,
+        installer_types=type_list,
+        version_mode=version_mode,
+        version_filter=version_filter,
+        auto_update=pkg_index.package.cache_settings.auto_update if pkg_index.package.cache_settings else True,
+    )
+    
+    # Persist to package.json
+    data_dir = get_data_dir()
+    if not pkg_index.storage_path:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Package storage path is not available"},
+        )
+    package_dir = data_dir / pkg_index.storage_path
+    package_json = package_dir / "package.json"
+    pkg = pkg_index.package
+    updated_pkg = PackageCommonMetadata(
+        package_identifier=pkg.package_identifier,
+        package_name=pkg.package_name,
+        publisher=pkg.publisher,
+        short_description=pkg.short_description,
+        license=pkg.license,
+        tags=pkg.tags,
+        homepage=pkg.homepage,
+        support_url=pkg.support_url,
+        is_example=pkg.is_example,
+        cached=True,
+        cache_settings=new_cache_settings,
+    )
+    package_json.write_text(updated_pkg.model_dump_json(indent=2), encoding="utf-8")
+    
+    # Re-import with new filters
+    index_path = _get_winget_index_path()
+    if not index_path.exists():
+        return JSONResponse(
+            status_code=404,
+            content={"error": "WinGet index not found"},
+        )
+    
+    try:
+        importer = WinGetPackageImporter(index_path)
+        # Empty lists mean "all" (no filter), so pass None to importer
+        result = await importer.import_package(
+            package_id,
+            architectures=arch_list if arch_list else None,
+            scopes=scope_list if scope_list else None,
+            installer_types=type_list if type_list else None,
+            version_mode=version_mode,
+            version_filter=version_filter,
+            track_cache=True
+        )
+        importer.close()
+        
+        build_index_from_disk()
+        
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "result": result},
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Update failed: {str(e)}"},
+        )
+
+
+@router.post("/admin/cached-packages/{package_id}/delete")
+async def admin_cached_package_delete(package_id: str) -> JSONResponse:
+    """Remove a package from cache tracking."""
+    repo_index = get_repository_index()
+    pkg_index = repo_index.packages.get(package_id)
+    if not pkg_index or not getattr(pkg_index.package, "cached", False):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Cached package not found"},
+        )
+    
+    data_dir = get_data_dir()
+    if not pkg_index.storage_path:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Package storage path is not available"},
+        )
+    package_dir = data_dir / pkg_index.storage_path
+    if package_dir.is_dir():
+        for child in package_dir.iterdir():
+            if child.is_file():
+                child.unlink(missing_ok=True)
+            elif child.is_dir():
+                for version_file in child.iterdir():
+                    if version_file.is_file():
+                        version_file.unlink(missing_ok=True)
+                child.rmdir()
+        package_dir.rmdir()
+    
+    build_index_from_disk()
+    
+    return JSONResponse(
+        status_code=200,
+        content={"success": True, "message": "Package removed from cache"},
+    )
+
+
+@router.post("/admin/cached-packages/{package_id}/versions/{version_id}/delete")
+async def admin_delete_cached_version(
+    package_id: str,
+    version_id: str,
+) -> JSONResponse:
+    """
+    Delete a cached version (without removing the whole cached package).
+    """
+    # Decode URL-encoded version_id
+    version_id = urllib.parse.unquote(version_id)
+
+    repo_index = get_repository_index()
+    pkg_index = repo_index.packages.get(package_id)
+    if not pkg_index or not getattr(pkg_index.package, "cached", False):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Cached package not found"},
+        )
+
+    v = _get_version_by_id(package_id, version_id)
+    if not v:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Version not found"},
+        )
+
+    data_dir = get_data_dir()
+    if not v.storage_path:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Version storage path is not available"},
+        )
+
+    version_dir = data_dir / v.storage_path
+    if version_dir.is_dir():
+        for child in version_dir.iterdir():
+            if child.is_file():
+                child.unlink(missing_ok=True)
+        try:
+            version_dir.rmdir()
+        except OSError:
+            # If directory still contains subfolders, remove them as well.
+            for child in version_dir.iterdir():
+                if child.is_dir():
+                    for f in child.iterdir():
+                        if f.is_file():
+                            f.unlink(missing_ok=True)
+                    child.rmdir()
+            version_dir.rmdir()
+
+    build_index_from_disk()
+    return JSONResponse(
+        status_code=200,
+        content={"success": True, "message": "Cached version deleted successfully"},
     )

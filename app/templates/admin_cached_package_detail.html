@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+
+{% block title %}Admin – Cached Package: {{ package.package_name }} | winget REST Repository{% endblock %}
+
+{% block content %}
+<section>
+  <div>
+    <a href="/admin/packages" class="button-back" title="Back to packages">←</a>
+  </div>
+
+  {% set cs = package.cache_settings %}
+  <div class="package-layout">
+    <section id="package-details">
+      <h3>
+        Package: <code>{{ package.package_identifier }}</code>
+        <button
+          onclick="openCachedPackageModal('{{ package.package_identifier }}')"
+          class="button-small button-add-regular"
+          title="Edit cached package"
+        >
+          Edit
+        </button>
+        <button
+          onclick="confirmDeleteCachedPackage('{{ package.package_identifier }}')"
+          class="button-delete"
+          title="Delete cached package"
+        >
+          🗑️
+        </button>
+      </h3>
+      <dl class="details-list">
+        <dt>Name</dt>
+        <dd>{{ package.package_name if package else '-' }}</dd>
+
+        <dt>Publisher</dt>
+        <dd>{{ package.publisher if package else '-' }}</dd>
+
+        <dt>Cached Versions</dt>
+        <dd>{{ cached_versions|length }}</dd>
+
+        <dt>Auto Update</dt>
+        <dd>{{ "Yes" if cs and cs.auto_update else "No" }}</dd>
+
+        <dt>Architectures</dt>
+        <dd>{{ ", ".join(cs.architectures) if cs and cs.architectures else "All" }}</dd>
+
+        <dt>Scopes</dt>
+        <dd>{{ ", ".join(cs.scopes) if cs and cs.scopes else "All" }}</dd>
+
+        <dt>Installer Types</dt>
+        <dd>{{ ", ".join(cs.installer_types) if cs and cs.installer_types else "All" }}</dd>
+
+        <dt>Version Mode</dt>
+        <dd>{{ cs.version_mode if cs else "latest" }}</dd>
+
+        <dt>Version Filter</dt>
+        <dd>{{ cs.version_filter if cs and cs.version_filter else "-" }}</dd>
+      </dl>
+</section>
+
+    <section id="versions-section">
+      <h3>Versions</h3>
+
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Version</th>
+        <th>Architecture</th>
+        <th>Scope</th>
+        <th>Installer Type</th>
+        <th>Installer File</th>
+            <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+          {% for v in cached_versions %}
+          {% set version_id = v.version ~ "-" ~ v.architecture ~ "-" ~ v.scope %}
+      <tr>
+            <td><code>{{ v.version }}</code></td>
+            <td>{{ v.architecture }}</td>
+            <td>{{ v.scope }}</td>
+            <td>{{ v.installer_type }}</td>
+            <td><code>{{ v.installer_file or '-' }}</code></td>
+            <td>
+              <button
+                onclick="deleteCachedVersion('{{ package.package_identifier }}', '{{ version_id }}')"
+                class="button-small button-danger"
+                title="Delete cached version"
+              >
+                Delete
+              </button>
+            </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="6">No versions cached yet.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+  </div>
+</section>
+
+{% include "modal.html" %}
+
+<script>
+function openCachedPackageModal(packageId) {
+  const encoded = encodeURIComponent(packageId);
+  openModal(
+    'Edit Cached Package',
+    `/admin/cached-packages/${encoded}/fragment`,
+    `/admin/cached-packages/${encoded}`,
+    'reload'
+  );
+}
+
+function confirmDeleteCachedPackage(packageId) {
+  if (!confirm(`Delete cached package ${packageId} and all cached versions? This cannot be undone.`)) {
+    return;
+  }
+  fetch(`/admin/cached-packages/${encodeURIComponent(packageId)}/delete`, {
+    method: 'POST',
+  })
+    .then(res => res.json())
+  .then(data => {
+    if (data.success) {
+        window.location.href = '/admin/packages';
+      } else {
+        alert(data.error || 'Failed to delete cached package');
+      }
+    })
+    .catch(error => alert(`Error: ${error.message}`));
+}
+
+async function deleteCachedVersion(packageId, versionId) {
+  if (!confirm(`Delete cached version ${versionId}? This cannot be undone.`)) {
+    return;
+  }
+  try {
+    const encodedPackageId = encodeURIComponent(packageId);
+    const encodedVersionId = encodeURIComponent(versionId);
+    const res = await fetch(`/admin/cached-packages/${encodedPackageId}/versions/${encodedVersionId}/delete`, {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      window.location.reload();
+    } else {
+      alert(data.error || 'Failed to delete cached version');
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  }
+}
+
+// Hook into modal content loading for cached package form (filter toggles)
+const originalOnModalContentLoaded = window.onModalContentLoaded;
+window.onModalContentLoaded = function(modalBody) {
+  if (originalOnModalContentLoaded) {
+    originalOnModalContentLoaded(modalBody);
+  }
+
+  const form = modalBody.querySelector('#cached-package-form');
+  if (!form) return;
+  
+  form.querySelectorAll('.filter-toggle').forEach(toggle => {
+    const groupId = toggle.getAttribute('data-group-id');
+    if (!groupId) return;
+
+    const group = form.querySelector(`#${groupId}`);
+    if (!group) return;
+    
+    function updateVisibility() {
+      if (toggle.checked) {
+        group.style.display = '';
+      } else {
+        group.style.display = 'none';
+        group.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+          cb.checked = false;
+        });
+        const fieldName = group.getAttribute('data-multi-select');
+        const hiddenField = form.querySelector(`input[type="hidden"][name="${fieldName}"]`);
+        if (hiddenField) {
+          hiddenField.value = '';
+        }
+      }
+    }
+
+    toggle.addEventListener('change', updateVisibility);
+    updateVisibility();
+  });
+};
+</script>
+{% endblock %}
+

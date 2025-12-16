@@ -5,6 +5,15 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 
+# Cache settings used for cached packages. Empty lists mean "no filter" (all).
+class CacheSettings(BaseModel):
+    architectures: List[str] = Field(default_factory=list)
+    scopes: List[str] = Field(default_factory=list)
+    installer_types: List[str] = Field(default_factory=list)
+    version_mode: str = Field(default="latest", description="'latest' or 'all'")
+    version_filter: Optional[str] = Field(default=None, description="Version wildcard filter")
+    auto_update: bool = Field(default=True, description="Automatically update this cached package")
+
 
 class SourceAgreement(BaseModel):
     agreement_label: str
@@ -151,6 +160,14 @@ class PackageCommonMetadata(BaseModel):
     tags: List[str] = Field(default_factory=list)
     homepage: Optional[str] = None
     support_url: Optional[str] = None
+    cached: bool = Field(
+        default=False,
+        description="True if this package is a cached package pulled from the WinGet index.",
+    )
+    cache_settings: Optional[CacheSettings] = Field(
+        default=None,
+        description="Cache settings for cached packages (ignored for owned packages).",
+    )
     is_example: bool = Field(
         default=False,
         description="If true, this package is for documentation only and is ignored by indexing.",
@@ -186,7 +203,7 @@ class VersionMetadata(BaseModel):
 
     version: str
     architecture: str
-    scope: str  # e.g. "user" or "machine"
+    scope: Optional[str] = None  # e.g. "user" or "machine"; can be None/absent
 
     installer_type: str = "exe"
     installer_file: Optional[str] = Field(

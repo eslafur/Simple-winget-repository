@@ -3,5 +3,8 @@ uvicorn[standard]
 jinja2
 python-multipart
 pydantic
+aiofiles
+httpx
+pyyaml
 
 

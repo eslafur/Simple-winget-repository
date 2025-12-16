@@ -104,85 +104,6 @@ def _load_repository_config_from_disk() -> RepositoryConfig:
     return config
 
 
-def _ensure_example_package_exists() -> None:
-    """
-    Ensure the example package tree exists on disk with reasonable example data.
-
-    This package is *ignored* when building the in-memory index, but clearly
-    documents the expected on-disk structure.
-    """
-    data_dir = get_data_dir()
-    pkg_dir = data_dir / EXAMPLE_PACKAGE_ID
-    package_json = pkg_dir / "package.json"
-
-    pkg_dir.mkdir(parents=True, exist_ok=True)
-
-    if package_json.exists():
-        try:
-            raw = json.loads(package_json.read_text(encoding="utf-8"))
-            pkg_meta = PackageCommonMetadata(**raw)
-        except Exception:
-            pkg_meta = PackageCommonMetadata(
-                package_identifier=EXAMPLE_PACKAGE_ID,
-                package_name="Our Example App",
-                publisher="Example Publisher",
-                short_description="Example package used to document the repository layout.",
-                license="Freeware",
-                tags=["example", "documentation"],
-                is_example=True,
-            )
-    else:
-        pkg_meta = PackageCommonMetadata(
-            package_identifier=EXAMPLE_PACKAGE_ID,
-            package_name="Our Example App",
-            publisher="Example Publisher",
-            short_description="Example package used to document the repository layout.",
-            license="Freeware",
-            tags=["example", "documentation"],
-            is_example=True,
-        )
-
-    # Ensure is_example is set so the indexer will skip this package.
-    if not pkg_meta.is_example:
-        pkg_meta.is_example = True
-
-    package_json.write_text(pkg_meta.model_dump_json(indent=2), encoding="utf-8")
-
-    # Example version: data/our.example/1.0-x86-user/version.json
-    version_dir = pkg_dir / "1.0-x86-user"
-    version_dir.mkdir(parents=True, exist_ok=True)
-    version_json = version_dir / "version.json"
-
-    if version_json.exists():
-        try:
-            raw = json.loads(version_json.read_text(encoding="utf-8"))
-            version_meta = VersionMetadata(**raw)
-        except Exception:
-            version_meta = VersionMetadata(
-                version="1.0",
-                architecture="x86",
-                scope="user",
-                installer_type="exe",
-                installer_file="our-example-installer.exe",
-                silent_arguments="/quiet",
-                interactive_arguments="/passive",
-                log_arguments="/log install.log",
-            )
-    else:
-        version_meta = VersionMetadata(
-            version="1.0",
-            architecture="x86",
-            scope="user",
-            installer_type="exe",
-            installer_file="our-example-installer.exe",
-            silent_arguments="/quiet",
-            interactive_arguments="/passive",
-            log_arguments="/log install.log",
-        )
-
-    version_json.write_text(version_meta.model_dump_json(indent=2), encoding="utf-8")
-
-
 def build_index_from_disk() -> None:
     """
     Crawl the data directory and build the in-memory index of packages/versions.
@@ -197,87 +118,96 @@ def build_index_from_disk() -> None:
     if not data_dir.exists():
         data_dir.mkdir(parents=True, exist_ok=True)
 
-    for pkg_dir in data_dir.iterdir():
-        if not pkg_dir.is_dir():
+    # Scan owned folder for packages uploaded to the repository
+    owned_dir = data_dir / "owned"
+    if not owned_dir.exists():
+        owned_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Also scan cached folder for cached packages
+    cached_dir = data_dir / "cached"
+    if not cached_dir.exists():
+        cached_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Scan both owned and cached directories
+    for scan_dir in [owned_dir, cached_dir]:
+        if not scan_dir.exists():
             continue
-
-        package_json = pkg_dir / "package.json"
-
-        if not package_json.exists():
-            # Not a valid package folder; skip.
-            continue
-
-        try:
-            raw = json.loads(package_json.read_text(encoding="utf-8"))
-            pkg_meta = PackageCommonMetadata(**raw)
-        except Exception:
-            # Skip malformed packages for now.
-            continue
-
-        # Use the package identifier from metadata as the logical key.
-        # The on-disk folder name is treated as an implementation detail.
-        package_id = pkg_meta.package_identifier
-
-        # Skip the example package entirely when building the index.
-        if package_id == EXAMPLE_PACKAGE_ID or pkg_meta.is_example:
-            continue
-
-        package_index = PackageIndex(
-            package=pkg_meta,
-            versions=[],
-            storage_path=str(pkg_dir.relative_to(data_dir)),
-        )
-
-        # Traverse version folders directly under the package directory.
-        # Expected convention: "<version>-<architecture>-<scope>", e.g. "1.0-x86-user".
-        # The folder name is used only as a hint; the JSON fields are authoritative.
-        for version_dir in pkg_dir.iterdir():
-            if not version_dir.is_dir():
+        
+        for pkg_dir in scan_dir.iterdir():
+            if not pkg_dir.is_dir():
                 continue
-            if version_dir.name == "x86" or version_dir.name == "arm" or version_dir.name == "x64":
-                # Old-style nested layout (arch/scope/version) is ignored by this indexer.
+            package_json = pkg_dir / "package.json"
+            if not package_json.exists():
                 continue
-
-            version_json = version_dir / "version.json"
-            if not version_json.exists():
-                continue
-
             try:
-                raw = json.loads(version_json.read_text(encoding="utf-8"))
+                raw = json.loads(package_json.read_text(encoding="utf-8"))
+                # Migration: accept legacy "package_id" key
+                if "package_identifier" not in raw and "package_id" in raw:
+                    raw["package_identifier"] = raw.pop("package_id")
+                pkg_meta = PackageCommonMetadata(**raw)
             except Exception:
                 continue
 
-            # Derive hints from the folder name if it matches "<version>-<arch>-<scope>".
-            folder_version = folder_arch = folder_scope = None
-            parts = version_dir.name.split("-")
-            if len(parts) == 3:
-                folder_version, folder_arch, folder_scope = parts
+            # Use the package identifier from metadata as the logical key.
+            # The on-disk folder name is treated as an implementation detail.
+            package_id = pkg_meta.package_identifier
 
-            # If the JSON is missing core fields, fall back to the folder hints.
-            # We intentionally only *fill in* missing values instead of overriding
-            # anything that is already present in the JSON.
-            if "version" not in raw and folder_version is not None:
-                raw["version"] = folder_version
-            if "architecture" not in raw and folder_arch is not None:
-                raw["architecture"] = folder_arch
-            if "scope" not in raw and folder_scope is not None:
-                raw["scope"] = folder_scope
+            package_index = PackageIndex(
+                package=pkg_meta,
+                versions=[],
+                storage_path=str(pkg_dir.relative_to(data_dir)),
+            )
 
-            try:
-                version_meta = VersionMetadata(**raw)
-            except Exception:
-                continue
+            # Traverse version folders directly under the package directory.
+            # Expected convention: "<version>-<architecture>-<scope>", e.g. "1.0-x86-user".
+            # The folder name is used only as a hint; the JSON fields are authoritative.
+            for version_dir in pkg_dir.iterdir():
+                if not version_dir.is_dir():
+                    continue
+                if version_dir.name == "x86" or version_dir.name == "arm" or version_dir.name == "x64":
+                    # Old-style nested layout (arch/scope/version) is ignored by this indexer.
+                    continue
 
-            # Record where this version lives on disk relative to the data directory
-            # so that APIs can construct paths to installer files, logs, etc.
-            version_meta.storage_path = str(version_dir.relative_to(data_dir))
+                version_json = version_dir / "version.json"
+                if not version_json.exists():
+                    continue
 
-            package_index.versions.append(version_meta)
+                try:
+                    raw = json.loads(version_json.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
 
-        # Always include the package in the index, even if it currently has
-        # no versions. This is important for the admin UI, which needs to
-        # manage packages before any versions are created.
-        index.packages[package_id] = package_index
+                # Derive hints from the folder name if it matches "<version>-<arch>-<scope>".
+                folder_version = folder_arch = folder_scope = None
+                parts = version_dir.name.split("-")
+                if len(parts) == 3:
+                    folder_version, folder_arch, folder_scope = parts
+
+                # If the JSON is missing core fields, fall back to the folder hints.
+                # We intentionally only *fill in* missing values instead of overriding
+                # anything that is already present in the JSON.
+                if "version" not in raw and folder_version is not None:
+                    raw["version"] = folder_version
+                if "architecture" not in raw and folder_arch is not None:
+                    raw["architecture"] = folder_arch
+                if "scope" not in raw and folder_scope is not None:
+                    raw["scope"] = folder_scope
+
+                try:
+                    version_meta = VersionMetadata(**raw)
+                except Exception:
+                    continue
+
+                # Record where this version lives on disk relative to the data directory
+                # so that APIs can construct paths to installer files, logs, etc.
+                version_meta.storage_path = str(version_dir.relative_to(data_dir))
+
+                package_index.versions.append(version_meta)
+
+            # Always include the package in the index, even if it currently has
+            # no versions. This is important for the admin UI, which needs to
+            # manage packages before any versions are created.
+            index.packages[package_id] = package_index
 
     index.last_built_at = get_repository_config().created_at if index.last_built_at is None else index.last_built_at
     _repository_index = index
@@ -300,7 +230,6 @@ async def initialize_repository() -> None:
     Responsibilities:
     * Resolve and create the data directory.
     * Load + persist repository.json (applying defaults where needed).
-    * Ensure the example package exists on disk.
     * Build the initial in-memory index.
     * Start a background task that rebuilds the index periodically.
     """
@@ -312,8 +241,6 @@ async def initialize_repository() -> None:
     # Load and persist repository config.
     _repository_config = _load_repository_config_from_disk()
 
-    # Create / update the example package used to document structure.
-    _ensure_example_package_exists()
 
     # Initial index build.
     build_index_from_disk()

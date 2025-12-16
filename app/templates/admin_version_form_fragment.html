@@ -1,3 +1,5 @@
+{% include "modal_form_helpers.html" %}
+
 <form
   method="post"
   class="form"
@@ -5,10 +7,11 @@
   data-package-id="{{ package_id }}"
   data-version-id="{{ version_id }}"
   data-version-form="true"
+  data-submit-endpoint="{% if version_id != 'new' %}/admin/packages/{{ package_id }}/versions/{{ version_id }}{% else %}/admin/packages/{{ package_id }}/versions/new{% endif %}"
   action="#"
 >
-  <div class="form-row">
-    <label for="version">Version *</label>
+  <div class="modal-form-group">
+    <label for="version">Version <span class="required">*</span></label>
     <input
       id="version"
       name="version"
@@ -18,8 +21,8 @@
     />
   </div>
 
-  <div class="form-row">
-    <label for="product_code">Product code *</label>
+  <div class="modal-form-group">
+    <label for="product_code">Product code <span class="required">*</span></label>
     <input
       id="product_code"
       name="product_code"
@@ -29,7 +32,7 @@
     />
   </div>
 
-  <div class="form-row">
+  <div class="modal-form-group">
     <label for="architecture">Architecture</label>
     <select id="architecture" name="architecture" required>
       {% for opt in architecture_options %}
@@ -40,7 +43,7 @@
     </select>
   </div>
 
-  <div class="form-row">
+  <div class="modal-form-group">
     <label for="scope">Scope</label>
     <select id="scope" name="scope" required>
       {% for opt in scope_options %}
@@ -51,7 +54,7 @@
     </select>
   </div>
 
-  <div class="form-row">
+  <div class="modal-form-group">
     <label for="installer_type">Installer type</label>
     <select id="installer_type" name="installer_type">
       {% for opt in installer_type_options %}
@@ -63,8 +66,8 @@
   </div>
 
   <div id="nested-installers-section" class="form-section">
-    <div class="form-row">
-      <label for="nested_installer_type">Nested installer type *</label>
+    <div class="modal-form-group">
+      <label for="nested_installer_type">Nested installer type <span class="required">*</span></label>
       <select id="nested_installer_type" name="nested_installer_type">
         <option value="">(None)</option>
         {% for opt in nested_installer_type_options %}
@@ -76,25 +79,21 @@
         </option>
         {% endfor %}
       </select>
-      <p class="hint">
-        Used when the installer is an archive (zip) that contains another installer.
-      </p>
+      <small>Used when the installer is an archive (zip) that contains another installer.</small>
     </div>
 
-    <div class="form-row" id="nested-single-row">
-      <label for="nested_single_relative_file_path">Nested installer path in archive *</label>
+    <div class="modal-form-group" id="nested-single-row">
+      <label for="nested_single_relative_file_path">Nested installer path in archive <span class="required">*</span></label>
       <input
         id="nested_single_relative_file_path"
         name="nested_relative_file_path"
         type="text"
         value="{% if version_meta and version_meta.nested_installer_type and version_meta.nested_installer_type != 'portable' and version_meta.nested_installer_files %}{{ version_meta.nested_installer_files[0].relative_file_path }}{% else %}{% endif %}"
       />
-      <p class="hint">
-        Relative path to the nested installer file inside the archive.
-      </p>
+      <small>Relative path to the nested installer file inside the archive.</small>
     </div>
 
-    <div class="form-row" id="nested-portable-table-container">
+    <div class="modal-form-group" id="nested-portable-table-container">
       <label>Nested portable files</label>
       <table class="table table-compact" id="nested-portable-table">
         <thead>
@@ -142,30 +141,27 @@
           </tr>
         </tbody>
       </table>
-      <p class="hint">
-        When NestedInstallerType is portable, list each portable binary inside the archive
-        and optionally the command alias that WinGet should expose.
-      </p>
+      <small>When NestedInstallerType is portable, list each portable binary inside the archive and optionally the command alias that WinGet should expose.</small>
     </div>
   </div>
 
-  <div class="form-row">
-    <label for="upload">Installer file</label>
+  <div class="modal-form-group">
+    <label for="upload">Installer file{% if not version_meta %} <span class="required">*</span>{% endif %}</label>
     {% if version_meta and version_meta.installer_file %}
-    <p class="hint">Current: <code>{{ version_meta.installer_file }}</code></p>
+    <small>Current: <code>{{ version_meta.installer_file }}</code></small>
     {% endif %}
     <input id="upload" name="upload" type="file" {% if not version_meta %}required{% endif %} />
-    <p class="hint">
+    <small>
       {% if version_meta %}
       Upload a new installer to replace the existing one.
       {% else %}
       Uploading a setup file is mandatory for a new version.
       {% endif %}
-    </p>
+    </small>
   </div>
 
   <div id="custom-installer-section" class="form-section">
-    <div class="form-row">
+    <div class="modal-form-group">
       <label>Custom installer steps</label>
       <table class="table table-compact" id="custom-installer-steps">
         <thead>
@@ -235,19 +231,16 @@
           </tr>
         </tbody>
       </table>
-      <p class="hint">
-        The server will generate an <code>install.bat</code> from these steps and
-        package it together with the uploaded installer into a ZIP that WinGet downloads.
-      </p>
+      <small>The server will generate an <code>install.bat</code> from these steps and package it together with the uploaded installer into a ZIP that WinGet downloads.</small>
     </div>
   </div>
 
-  <div class="form-row">
+  <div class="modal-form-group">
     <label for="silent_arguments">
       <input
         type="checkbox"
         name="install_mode_silent"
-        value="1"
+        value="true"
         {% if version_meta %}
           {% if version_meta.install_mode_silent %}checked{% endif %}
         {% else %}
@@ -264,12 +257,12 @@
     />
   </div>
 
-  <div class="form-row">
+  <div class="modal-form-group">
     <label for="silent_with_progress_arguments">
       <input
         type="checkbox"
         name="install_mode_silent_with_progress"
-        value="1"
+        value="true"
         {% if version_meta %}
           {% if version_meta.install_mode_silent_with_progress %}checked{% endif %}
         {% else %}
@@ -286,12 +279,12 @@
     />
   </div>
 
-  <div class="form-row">
+  <div class="modal-form-group">
     <label for="interactive_arguments">
       <input
         type="checkbox"
         name="install_mode_interactive"
-        value="1"
+        value="true"
         {% if version_meta %}
           {% if version_meta.install_mode_interactive %}checked{% endif %}
         {% else %}
@@ -308,7 +301,7 @@
     />
   </div>
 
-  <div class="form-row">
+  <div class="modal-form-group">
     <label for="log_arguments">Log arguments</label>
     <input
       id="log_arguments"
@@ -318,45 +311,39 @@
     />
   </div>
 
-  <div class="form-row">
+  <div class="modal-form-group">
     <label>
       <input
         type="checkbox"
         id="requires_elevation"
         name="requires_elevation"
-        value="1"
+        value="true"
         {% if version_meta and version_meta.requires_elevation %}checked{% endif %}
       />
       Requires elevation (run as administrator)
     </label>
   </div>
 
-  <div class="form-row">
+  <div class="modal-form-group">
     <label for="package_dependencies">Package dependencies</label>
     <input
       id="package_dependencies_filter"
       type="text"
       placeholder="Filter packages..."
     />
-    <select
-      id="package_dependencies"
-      name="package_dependencies"
-      multiple
-      size="6"
-    >
+    <div class="modal-multiselect-group" data-multi-select="package_dependencies">
       {% for pid in all_package_ids %}
-      <option
-        value="{{ pid }}"
-        {% if version_meta and version_meta.package_dependencies and pid in version_meta.package_dependencies %}selected{% endif %}
-      >
+      <label class="modal-checkbox-label">
+        <input
+          type="checkbox"
+          value="{{ pid }}"
+          {% if version_meta and version_meta.package_dependencies and pid in version_meta.package_dependencies %}checked{% endif %}
+        >
         {{ pid }}
-      </option>
+      </label>
       {% endfor %}
-    </select>
-    <p class="hint">
-      Select zero or more packages that this version depends on. Use Ctrl/Shift
-      to select multiple entries.
-    </p>
+    </div>
+    <small>Select zero or more packages that this version depends on.</small>
   </div>
 
 </form>

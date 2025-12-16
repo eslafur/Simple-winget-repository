@@ -19,7 +19,7 @@
       </tr>
     </thead>
     <tbody>
-      {% for pkg in packages %}
+      {% for pkg in owned_packages %}
       <tr onclick="window.location.href='/admin/packages/{{ pkg.id }}'">
         <td><code>{{ pkg.id }}</code></td>
         <td>{{ pkg.name }}</td>
@@ -28,6 +28,60 @@
       {% else %}
       <tr>
         <td colspan="3">No packages found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>
+    WinGet Index Status
+  </h2>
+  <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+    <span>WinGet index last pulled: <strong>{{ index_last_pulled or "never" }}</strong></span>
+    <button onclick="updateWingetIndex()" class="button-secondary" title="Update WinGet index">Update Index</button>
+  </div>
+</section>
+
+<section>
+  <h2>
+    Cached WinGet Packages
+    <button onclick="openNewCachedPackageModal()" class="button-add" title="Add cached package">+</button>
+  </h2>
+  <p>Packages cached from the official WinGet repository. Click a row to view details and manage filters.</p>
+
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Identifier</th>
+        <th>Name</th>
+        <th>Publisher</th>
+        <th>Latest Version</th>
+        <th>Filters</th>
+        <th>Versions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for pkg in cached_packages %}
+      <tr onclick="window.location.href='/admin/cached-packages/{{ pkg.package_id }}'">
+        <td><code>{{ pkg.package_id }}</code></td>
+        <td>{{ pkg.package_name }}</td>
+        <td>{{ pkg.publisher }}</td>
+        <td>{{ pkg.latest_version or "-" }}</td>
+        <td>
+          <small>
+            Arch: {{ pkg.filters.architectures }}<br>
+            Scope: {{ pkg.filters.scopes }}<br>
+            Type: {{ pkg.filters.installer_types }}<br>
+            Mode: {{ pkg.filters.version_mode }}
+          </small>
+        </td>
+        <td>{{ pkg.version_count }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="6">No cached packages found.</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -45,6 +99,93 @@ function openNewPackageModal() {
     'reload'
   );
 }
+
+function openNewCachedPackageModal() {
+  openModal(
+    'Add Cached Package',
+    '/admin/cached-packages/new/fragment',
+    '/admin/cached-packages/new',
+    'reload'
+  );
+}
+
+async function updateWingetIndex() {
+  if (!confirm('This will download the latest WinGet index. This may take a few minutes. Continue?')) {
+    return;
+  }
+  
+  const button = event.target;
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Updating...';
+  
+  try {
+    const response = await fetch('/admin/winget-index/update', {
+      method: 'POST',
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      alert('Index updated successfully!');
+      location.reload();
+    } else {
+      alert('Error: ' + (data.error || 'Failed to update index'));
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  } catch (error) {
+    alert('Error: ' + error.message);
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+// Hook into modal content loading for cached package form
+const originalOnModalContentLoaded = window.onModalContentLoaded;
+window.onModalContentLoaded = function(modalBody) {
+  // Call original hook first (modal_form_helpers.html)
+  if (originalOnModalContentLoaded) {
+    originalOnModalContentLoaded(modalBody);
+  }
+  
+  // Set up filter toggle handlers for cached package form
+  const form = modalBody.querySelector('#cached-package-form');
+  if (form) {
+    form.querySelectorAll('.filter-toggle').forEach(toggle => {
+      const groupId = toggle.getAttribute('data-group-id');
+      if (!groupId) return;
+      
+      const group = form.querySelector(`#${groupId}`);
+      if (!group) return;
+      
+      // Function to update visibility
+      function updateVisibility() {
+        if (toggle.checked) {
+          group.style.display = '';
+        } else {
+          group.style.display = 'none';
+          // Uncheck all checkboxes inside the group
+          group.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.checked = false;
+          });
+          // Clear the hidden field
+          const fieldName = group.getAttribute('data-multi-select');
+          const hiddenField = form.querySelector(`input[type="hidden"][name="${fieldName}"]`);
+          if (hiddenField) {
+            hiddenField.value = '';
+          }
+        }
+      }
+      
+      // Attach change handler
+      toggle.addEventListener('change', updateVisibility);
+      
+      // Initialize visibility
+      updateVisibility();
+    });
+  }
+};
 </script>
 {% endblock %}
 

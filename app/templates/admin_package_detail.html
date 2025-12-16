@@ -120,7 +120,7 @@ window.onModalContentLoaded = function(modalBody) {
   const customSection = form.querySelector('#custom-installer-section');
   const customStepsTbody = form.querySelector('#custom-steps-tbody');
   const depsFilter = form.querySelector('#package_dependencies_filter');
-  const depsSelect = form.querySelector('#package_dependencies');
+  const depsGroup = form.querySelector('[data-multi-select="package_dependencies"]');
 
   function updateNestedLayout() {
     if (!nestedSection) return;
@@ -275,12 +275,12 @@ window.onModalContentLoaded = function(modalBody) {
   setupDynamicCustomRows(customStepsTbody);
 
   // Simple client-side filter for the package dependencies multi-select.
-  if (depsFilter && depsSelect) {
+  if (depsFilter && depsGroup) {
     depsFilter.addEventListener('input', () => {
       const term = depsFilter.value.toLowerCase();
-      Array.from(depsSelect.options).forEach((opt) => {
-        const text = opt.textContent || opt.value || '';
-        opt.hidden = term && !text.toLowerCase().includes(term);
+      Array.from(depsGroup.querySelectorAll('.modal-checkbox-label')).forEach((label) => {
+        const text = label.textContent || '';
+        label.style.display = term && !text.toLowerCase().includes(term) ? 'none' : '';
       });
     });
   }
