@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, List, Dict, Any
 
-from app.data.models import CustomInstallerStep, VersionMetadata
+from app.domain.models import CustomInstallerStep, VersionMetadata
 
 
 def get_available_actions() -> List[Dict[str, Any]]:
@@ -44,7 +44,7 @@ def render_install_script(
     version = meta.version
     architecture = meta.architecture
     scope = meta.scope
-    steps = list(meta.custom_installer_steps or [])
+    steps = list[CustomInstallerStep](meta.custom_installer_steps or [])
     lines: List[str] = [
         "@echo off",
         "setlocal",

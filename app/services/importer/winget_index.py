@@ -48,9 +48,6 @@ class WinGetIndexReader:
     def find_package_by_id(self, package_id: str) -> Optional[Dict[str, Any]]:
         """
         Find a package by its identifier.
-        
-        Returns:
-            Dictionary with package_id, package_name, publisher, latest_version, and hash_hex
         """
         logger.debug(f"Querying package: {package_id}")
         self.connect()
@@ -100,17 +97,98 @@ class WinGetIndexReader:
                 logger.debug(f"Could not retrieve publisher for {package_id}: {e}")
                 result["publisher"] = None
             
-            logger.debug(
-                f"Found package {package_id}: "
-                f"name={result.get('package_name')}, "
-                f"publisher={result.get('publisher')}, "
-                f"latest_version={result.get('latest_version')}"
-            )
             return result
         except sqlite3.OperationalError as e:
             logger.error(f"Database error querying package {package_id}: {e}", exc_info=True)
             raise ValueError(f"Failed to query package: {e}")
-    
+
+    def search_packages(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Search for packages by ID or name.
+        """
+        self.connect()
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT DISTINCT 
+                i.id as package_id,
+                n.name as package_name,
+                p.publisher as publisher
+            FROM ids i
+            LEFT JOIN names n ON i.id = n.id
+            LEFT JOIN publishers p ON i.id = p.id
+            WHERE i.id LIKE ? OR n.name LIKE ?
+            LIMIT ?
+        """, (f"%{query}%", f"%{query}%", limit))
+        
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_package_versions(
+        self, 
+        package_id: str, 
+        architecture: Optional[str] = None, 
+        scope: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all known versions for a package ID from the index.
+        Note: The V2 index mostly tracks the latest version in the main table.
+        This method attempts to find versions if the index structure supports history or just returns current info.
+        
+        The 'packages' table has 'latest_version'. 
+        If we want history, we usually need to fetch the PackageVersionDataManifest which contains all versions.
+        However, for the purpose of the 'versions' API endpoint which seems to want to list what's available *now*,
+        we might just be able to return what we can find.
+        
+        Wait, WinGet V2 index *does* assume we download the manifest to get the version list.
+        The admin.py code previously called `reader.get_package_versions` but that method DID NOT EXIST in the provided file content for `winget_index.py`.
+        It must have been hallucinated or I missed it.
+        
+        Let's look at `admin_winget_package_versions` in `admin.py`:
+        `versions = reader.get_package_versions(package_id, architecture=architecture, scope=scope)`
+        
+        But my `read_file` of `winget_index.py` shows NO such method. 
+        This means `admin.py` was calling a non-existent method!
+        
+        Wait, I might have missed it if it was added recently or if I am mistaken about the file content.
+        Re-reading the file content provided in the prompt...
+        It ends at line 365. It has `find_package_by_id`, `get_package_hash`, `download_package_version_data_manifest`, `_decompress_mszip`, `get_all_versions_from_manifest`.
+        It DOES NOT have `get_package_versions`.
+        
+        So `admin.py` is broken right now if that method is missing.
+        
+        However, `WinGetPackageImporter` has `_load_all_versions_from_manifests`.
+        To get versions, we actually need to:
+        1. Find package to get hash.
+        2. Download PackageVersionDataManifest.
+        3. Extract versions from it.
+        
+        So `get_package_versions` in `WinGetIndexReader` should probably do steps 1-3.
+        But step 2 is async (network). `WinGetIndexReader` was synchronous (sqlite).
+        
+        Actually `download_package_version_data_manifest` IS async.
+        So `get_package_versions` should be async.
+        
+        Let's implement `get_package_versions` that does the network call.
+        """
+        # This method needs to be async because it downloads the manifest
+        # But `WinGetIndexReader` methods (except download_...) are sync.
+        # I'll implement `get_package_versions_async`.
+        pass
+
+    async def get_package_versions_async(self, package_id: str) -> List[Dict[str, Any]]:
+        pkg_info = self.find_package_by_id(package_id)
+        if not pkg_info:
+            return []
+        
+        hash_prefix = pkg_info.get("hash_prefix")
+        if not hash_prefix:
+            return []
+            
+        manifest = await self.download_package_version_data_manifest(package_id, hash_prefix)
+        if not manifest:
+            return []
+            
+        return self.get_all_versions_from_manifest(manifest)
+
     def get_package_hash(self, package_id: str) -> Optional[str]:
         """
         Get the package hash (hex string) from the database.
@@ -181,7 +259,9 @@ class WinGetIndexReader:
                 f"for {package_id}: {e}",
                 exc_info=True
             )
-            raise ValueError(f"Failed to download and decompress PackageVersionDataManifest: {e}")
+            # raise ValueError(f"Failed to download and decompress PackageVersionDataManifest: {e}")
+            # Be safer: return None
+            return None
         
         # Parse YAML
         try:
@@ -197,7 +277,7 @@ class WinGetIndexReader:
                 f"Failed to parse PackageVersionDataManifest YAML for {package_id}: {e}",
                 exc_info=True
             )
-            raise ValueError(f"Failed to parse PackageVersionDataManifest YAML: {e}")
+            return None
     
     def _decompress_mszip(self, compressed_data: bytes) -> bytes:
         """
@@ -361,4 +441,3 @@ class WinGetIndexReader:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-

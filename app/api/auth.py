@@ -4,7 +4,7 @@ from fastapi import APIRouter, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.data.authentication import (
+from app.services.authentication import (
     SESSION_COOKIE_NAME,
     create_session,
     create_user,

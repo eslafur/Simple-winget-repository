@@ -224,6 +224,10 @@ class VersionMetadata(BaseModel):
     architecture: str
     scope: Optional[str] = None  # e.g. "user" or "machine"; can be None/absent
 
+    # GUID to uniquely identify this installer instance (especially when multiple exist for same version/arch).
+    # New installers should have this; legacy ones might not.
+    installer_guid: Optional[str] = Field(default=None, description="Unique GUID for this installer.")
+
     installer_type: str = "exe"
     installer_file: Optional[str] = Field(
         default=None,
@@ -379,5 +383,4 @@ class AuthenticationStore(BaseModel):
 
     users: List[AuthUser] = Field(default_factory=list)
     sessions: List[AuthSession] = Field(default_factory=list)
-
 

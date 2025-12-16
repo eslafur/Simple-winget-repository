@@ -10,8 +10,6 @@ from pathlib import Path
 import httpx
 import aiofiles
 
-from app.data.winget_index_status import get_index_status_store
-
 
 WINGET_BASE_URL = "https://cdn.winget.microsoft.com/cache"
 INDEX_PACKAGE_V2 = "source2.msix"
@@ -110,10 +108,6 @@ async def download_winget_index(cache_dir: Path) -> Path:
             if public_dir.exists():
                 shutil.rmtree(public_dir, ignore_errors=True)
 
-            # Update status
-            status_store = get_index_status_store()
-            status_store.update_pulled_time(index_path=index_db_path)
-
             return index_db_path
                     
         except Exception as e:
@@ -144,4 +138,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\nError: {e}")
         sys.exit(1)
-

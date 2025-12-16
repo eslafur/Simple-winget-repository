@@ -6,9 +6,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.data.repository import initialize_repository
-from app.data.authentication import initialize_authentication
-from app.data.cached_packages_updater import daily_update_loop
+from app.core.dependencies import get_db_manager, get_repository
+from app.services.authentication import initialize_authentication
+from app.services.caching import CachingService
 
 # Configure logging
 logging.basicConfig(
@@ -38,12 +38,16 @@ async def startup_event() -> None:
     Initialize the JSON-backed repository, build the in-memory index,
     set up authentication storage, and start background tasks.
     """
-    await initialize_repository()
+    # Initialize DB (loads config and index)
+    db = get_db_manager()
+    db.initialize()
+    
     initialize_authentication()
     
-    # Job #1 (repository refresh from disk) is started inside initialize_repository().
-    # Job #2 (cached package updates) runs daily at 06:00 local time.
-    asyncio.create_task(daily_update_loop(run_hour=6, run_minute=0))
+    # Start Caching Service background loop
+    caching_service = CachingService(db)
+    # Run at 6:00 AM
+    asyncio.create_task(caching_service.run_periodic_updates(run_hour=6, run_minute=0))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -127,5 +131,3 @@ if __name__ == "__main__":
         port=8000,
         reload=True,
     )
-
-
