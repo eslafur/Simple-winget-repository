@@ -14,7 +14,7 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 from app.data.repository import get_data_dir
-from app.data.models import CacheSettings
+from app.data.models import CacheSettings, ADGroupScopeEntry
 
 
 class CachedPackage(BaseModel):
@@ -24,6 +24,10 @@ class CachedPackage(BaseModel):
     publisher: str
     cached: bool = True  # cached packages default to True
     cache_settings: CacheSettings = Field(default_factory=CacheSettings)
+    ad_group_scopes: List[ADGroupScopeEntry] = Field(
+        default_factory=list,
+        description="Corporate auto-install targets: AD group name + desired install scope.",
+    )
     last_updated: datetime = Field(default_factory=datetime.utcnow)
 
 

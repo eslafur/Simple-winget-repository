@@ -29,6 +29,7 @@ from app.data.models import (
     NestedInstallerFile,
     CustomInstallerStep,
     AuthUser,
+    ADGroupScopeEntry,
 )
 from app.data.repository import (
     get_data_dir,
@@ -96,6 +97,36 @@ def _get_version_by_id(package_id: str, version_id: str) -> Optional[VersionMeta
         if version_id_candidate == version_id:
             return v
     return None
+
+
+def _parse_ad_group_scopes(
+    groups: Optional[List[str]],
+    scopes: Optional[List[str]],
+) -> List[ADGroupScopeEntry]:
+    """
+    Parse repeated form fields into a validated list of ADGroupScopeEntry.
+
+    Empty/blank rows are ignored. If a row has a group but missing/invalid scope,
+    it will be ignored as well (admin UI should prevent this, but we keep server safe).
+    """
+    if not groups and not scopes:
+        return []
+    groups = groups or []
+    scopes = scopes or []
+    n = min(len(groups), len(scopes))
+    config = get_repository_config()
+    allowed_scopes = set(config.scope_options or ["user", "machine"])
+
+    result: List[ADGroupScopeEntry] = []
+    for i in range(n):
+        g = (groups[i] or "").strip()
+        s = (scopes[i] or "").strip()
+        if not g:
+            continue
+        if s not in allowed_scopes:
+            continue
+        result.append(ADGroupScopeEntry(ad_group=g, scope=s))  # type: ignore[arg-type]
+    return result
 
 
 async def _save_upload_and_hash(upload: UploadFile, target_dir: Path) -> tuple[str, str]:
@@ -275,12 +306,14 @@ async def admin_package_form_fragment_new(request: Request) -> HTMLResponse:
     """
     Returns new package form as a fragment (for modal overlay).
     """
+    config = get_repository_config()
     return templates.TemplateResponse(
         "admin_package_form_fragment.html",
         {
             "request": request,
             "package_id": "",
             "package": None,
+            "scopes": config.scope_options,
         },
     )
 
@@ -298,6 +331,7 @@ async def admin_package_form_fragment(
     
     # Package may or may not exist (for create vs edit)
     package = pkg_index.package if pkg_index else None
+    config = get_repository_config()
     
     return templates.TemplateResponse(
         "admin_package_form_fragment.html",
@@ -305,6 +339,7 @@ async def admin_package_form_fragment(
             "request": request,
             "package_id": package_id,
             "package": package,
+            "scopes": config.scope_options,
         },
     )
 
@@ -317,6 +352,8 @@ async def admin_create_package(
     short_description: str = Form(""),
     license: str = Form(""),
     tags: str = Form(""),
+    ad_group_scopes_group: Optional[List[str]] = Form(None),
+    ad_group_scopes_scope: Optional[List[str]] = Form(None),
 ) -> JSONResponse:
     """
     Create a new package. Returns JSON for AJAX response.
@@ -343,6 +380,7 @@ async def admin_create_package(
         short_description=short_description or None,
         license=license or None,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
+        ad_group_scopes=_parse_ad_group_scopes(ad_group_scopes_group, ad_group_scopes_scope),
         cached=False,
         cache_settings=None,
     )
@@ -365,6 +403,8 @@ async def admin_save_package(
     short_description: str = Form(""),
     license: str = Form(""),
     tags: str = Form(""),
+    ad_group_scopes_group: Optional[List[str]] = Form(None),
+    ad_group_scopes_scope: Optional[List[str]] = Form(None),
 ) -> JSONResponse:
     """
     Unified save: creates package if it doesn't exist, updates if it does.
@@ -398,6 +438,9 @@ async def admin_save_package(
             tags=[t.strip() for t in tags.split(",") if t.strip()],
             homepage=current.homepage,
             support_url=current.support_url,
+            ad_group_scopes=_parse_ad_group_scopes(ad_group_scopes_group, ad_group_scopes_scope)
+            or getattr(current, "ad_group_scopes", [])
+            or [],
             is_example=current.is_example,
             cached=current.cached,
             cache_settings=current.cache_settings,
@@ -411,6 +454,7 @@ async def admin_save_package(
             short_description=short_description or None,
             license=license or None,
             tags=[t.strip() for t in tags.split(",") if t.strip()],
+            ad_group_scopes=_parse_ad_group_scopes(ad_group_scopes_group, ad_group_scopes_scope),
             cached=False,
             cache_settings=None,
         )
@@ -1012,6 +1056,8 @@ async def admin_new_cached_package(
     installer_types: Optional[str] = Form(None),
     version_mode: str = Form("latest"),
     version_filter: Optional[str] = Form(None),
+    ad_group_scopes_group: Optional[List[str]] = Form(None),
+    ad_group_scopes_scope: Optional[List[str]] = Form(None),
 ) -> JSONResponse:
     """
     Import a new package from WinGet repository and add it to cache.
@@ -1044,6 +1090,7 @@ async def admin_new_cached_package(
     
     try:
         importer = WinGetPackageImporter(index_path)
+        ad_group_scopes_entries = _parse_ad_group_scopes(ad_group_scopes_group, ad_group_scopes_scope)
         result = await importer.import_package(
             package_id,
             architectures=arch_list,
@@ -1051,7 +1098,8 @@ async def admin_new_cached_package(
             installer_types=type_list,
             version_mode=version_mode,
             version_filter=version_filter,
-            track_cache=True
+            track_cache=True,
+            ad_group_scopes=ad_group_scopes_entries,
         )
         importer.close()
         
@@ -1145,6 +1193,8 @@ async def admin_save_cached_package(
     installer_types: Optional[str] = Form(None),
     version_mode: str = Form("latest"),
     version_filter: Optional[str] = Form(None),
+    ad_group_scopes_group: Optional[List[str]] = Form(None),
+    ad_group_scopes_scope: Optional[List[str]] = Form(None),
 ) -> JSONResponse:
     """
     Update cache settings for an existing cached package and re-import to apply filters.
@@ -1195,6 +1245,8 @@ async def admin_save_cached_package(
 
     version_filter = (version_filter or "").strip() or None
 
+    ad_group_scopes_entries = _parse_ad_group_scopes(ad_group_scopes_group, ad_group_scopes_scope)
+
     new_cache_settings = CacheSettings(
         architectures=arch_list,
         scopes=scope_list,
@@ -1226,6 +1278,7 @@ async def admin_save_cached_package(
         tags=pkg.tags,
         homepage=pkg.homepage,
         support_url=pkg.support_url,
+        ad_group_scopes=ad_group_scopes_entries or getattr(pkg, "ad_group_scopes", []) or [],
         is_example=pkg.is_example,
         cached=True,
         cache_settings=new_cache_settings,
@@ -1250,6 +1303,7 @@ async def admin_save_cached_package(
             version_mode=version_mode,
             version_filter=version_filter,
             track_cache=True,
+            ad_group_scopes=ad_group_scopes_entries or getattr(pkg, "ad_group_scopes", []) or [],
         )
         importer.close()
 
@@ -1327,6 +1381,7 @@ async def admin_cached_package_update_filters(
         tags=pkg.tags,
         homepage=pkg.homepage,
         support_url=pkg.support_url,
+        ad_group_scopes=getattr(pkg, "ad_group_scopes", []) or [],
         is_example=pkg.is_example,
         cached=True,
         cache_settings=new_cache_settings,
@@ -1351,7 +1406,8 @@ async def admin_cached_package_update_filters(
             installer_types=type_list if type_list else None,
             version_mode=version_mode,
             version_filter=version_filter,
-            track_cache=True
+            track_cache=True,
+            ad_group_scopes=getattr(pkg, "ad_group_scopes", []) or [],
         )
         importer.close()
         

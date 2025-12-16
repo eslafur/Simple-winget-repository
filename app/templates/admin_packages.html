@@ -148,6 +148,61 @@ window.onModalContentLoaded = function(modalBody) {
   if (originalOnModalContentLoaded) {
     originalOnModalContentLoaded(modalBody);
   }
+
+  // Common initializer for injected modal forms:
+  // - multi-select hidden fields
+  // - repeatable AD group + scope rows
+  const anyForm = modalBody.querySelector('form');
+  if (anyForm) {
+    anyForm.querySelectorAll('[data-multi-select]').forEach(group => {
+      const fieldName = group.dataset.multiSelect;
+      if (!fieldName) return;
+      if (group.dataset.multiSelectInitialized === 'true') return;
+      group.dataset.multiSelectInitialized = 'true';
+
+      let hiddenField = anyForm.querySelector(`input[type="hidden"][name="${fieldName}"]`);
+      if (!hiddenField) {
+        hiddenField = document.createElement('input');
+        hiddenField.type = 'hidden';
+        hiddenField.name = fieldName;
+        anyForm.appendChild(hiddenField);
+      }
+
+      function updateHiddenField() {
+        const checkboxes = group.querySelectorAll('input[type="checkbox"]:checked');
+        const values = Array.from(checkboxes)
+          .map(cb => cb.value.trim())
+          .filter(v => v.length > 0);
+        hiddenField.value = values.join(',');
+      }
+
+      group.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+        checkbox.addEventListener('change', updateHiddenField);
+      });
+      updateHiddenField();
+    });
+
+    const container = anyForm.querySelector('[data-ad-group-scope-list]');
+    if (container && container.dataset.adGroupScopeInitialized !== 'true') {
+      container.dataset.adGroupScopeInitialized = 'true';
+      const addBtn = anyForm.querySelector('[data-add-ad-group-scope]');
+      const tmpl = anyForm.querySelector('template[data-ad-group-scope-template]');
+      if (addBtn && tmpl) {
+        addBtn.addEventListener('click', () => {
+          const fragment = tmpl.content.cloneNode(true);
+          container.appendChild(fragment);
+        });
+      }
+      container.addEventListener('click', (e) => {
+        const target = e.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (target.matches('[data-remove-ad-group-scope]')) {
+          const row = target.closest('.ad-group-scope-row');
+          if (row) row.remove();
+        }
+      });
+    }
+  }
   
   // Set up filter toggle handlers for cached package form
   const form = modalBody.querySelector('#cached-package-form');

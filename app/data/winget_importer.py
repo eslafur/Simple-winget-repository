@@ -25,7 +25,7 @@ from app.data.cached_packages import (
     get_cached_packages_store,
     CachedPackage,
 )
-from app.data.models import CacheSettings
+from app.data.models import CacheSettings, ADGroupScopeEntry
 
 
 WINGET_BASE_URL = "https://cdn.winget.microsoft.com/cache"
@@ -473,7 +473,8 @@ class WinGetPackageImporter:
         installer_types: Optional[List[str]] = None,
         version_mode: str = "latest",
         version_filter: Optional[str] = None,
-        track_cache: bool = True
+        track_cache: bool = True,
+        ad_group_scopes: Optional[List[ADGroupScopeEntry]] = None,
     ) -> Dict[str, Any]:
         """
         Import a package from the official WinGet repository using V2 index.
@@ -612,6 +613,7 @@ class WinGetPackageImporter:
                     version_filter=version_filter,
                     auto_update=True,  # Default to auto-update enabled
                 ),
+                ad_group_scopes=ad_group_scopes or getattr(package_metadata, "ad_group_scopes", []) or [],
             )
             cache_store.add_or_update(cached_package)
         

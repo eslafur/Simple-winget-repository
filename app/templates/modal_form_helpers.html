@@ -83,6 +83,19 @@
 .modal-form-group select {
   cursor: pointer;
 }
+
+/* Repeatable list rows (e.g. AD group + scope entries) */
+.ad-group-scope-row {
+  display: grid;
+  grid-template-columns: 1fr 140px auto;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.ad-group-scope-row button {
+  white-space: nowrap;
+}
 </style>
 
 <script>
@@ -90,6 +103,7 @@
  * Initialize form fields when modal content loads.
  * This handles:
  * - Multi-select fields (updating hidden fields on checkbox change)
+ * - Repeatable row lists (AD group + scope entries)
  * - Form-specific submit endpoints
  */
 (function() {
@@ -108,6 +122,9 @@
       
       // Initialize multi-select fields
       initializeMultiSelectFields(form);
+
+      // Initialize repeatable AD group + scope rows
+      initializeADGroupScopeFields(form);
     }
     
     // Call original hook if it exists
@@ -148,6 +165,40 @@
       
       // Initialize with current values
       updateHiddenField();
+    });
+  }
+
+  /**
+   * Initialize AD group + scope repeatable rows.
+   *
+   * Expected markup:
+   * - container: [data-ad-group-scope-list]
+   * - add button: [data-add-ad-group-scope]
+   * - template: <template data-ad-group-scope-template>...</template>
+   * - remove button inside row: [data-remove-ad-group-scope]
+   */
+  function initializeADGroupScopeFields(form) {
+    const container = form.querySelector('[data-ad-group-scope-list]');
+    if (!container) return;
+
+    const addBtn = form.querySelector('[data-add-ad-group-scope]');
+    const tmpl = form.querySelector('template[data-ad-group-scope-template]');
+
+    if (addBtn && tmpl) {
+      addBtn.addEventListener('click', () => {
+        const fragment = tmpl.content.cloneNode(true);
+        container.appendChild(fragment);
+      });
+    }
+
+    // Event delegation for remove
+    container.addEventListener('click', (e) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.matches('[data-remove-ad-group-scope]')) {
+        const row = target.closest('.ad-group-scope-row');
+        if (row) row.remove();
+      }
     });
   }
 })();

@@ -72,5 +72,49 @@
     />
     <small>Enter tags separated by commas</small>
   </div>
+
+  <div class="modal-form-group">
+    <label>Corporate auto-install targets (AD group + scope)</label>
+    <div data-ad-group-scope-list>
+      {% if package and package.ad_group_scopes %}
+        {% for entry in package.ad_group_scopes %}
+        <div class="ad-group-scope-row">
+          <input
+            type="text"
+            name="ad_group_scopes_group"
+            value="{{ entry.ad_group }}"
+            placeholder="e.g., APP-Install-MyApp"
+          />
+          <select name="ad_group_scopes_scope">
+            {% for scope in scopes %}
+            <option value="{{ scope }}" {% if entry.scope == scope %}selected{% endif %}>{{ scope }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="button-danger button-small" data-remove-ad-group-scope>Remove</button>
+        </div>
+        {% endfor %}
+      {% endif %}
+    </div>
+
+    <button type="button" class="button-secondary button-small" data-add-ad-group-scope>Add entry</button>
+    <small>If a client reports membership in a listed AD group, it will be instructed to install this package with the chosen scope.</small>
+
+    <template data-ad-group-scope-template>
+      <div class="ad-group-scope-row">
+        <input
+          type="text"
+          name="ad_group_scopes_group"
+          value=""
+          placeholder="e.g., APP-Install-MyApp"
+        />
+        <select name="ad_group_scopes_scope">
+          {% for scope in scopes %}
+          <option value="{{ scope }}" {% if scope == 'user' %}selected{% endif %}>{{ scope }}</option>
+          {% endfor %}
+        </select>
+        <button type="button" class="button-danger button-small" data-remove-ad-group-scope>Remove</button>
+      </div>
+    </template>
+  </div>
 </form>
 

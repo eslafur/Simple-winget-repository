@@ -105,7 +105,70 @@ function openVersionModal(packageId, versionId) {
 // Optional hook invoked by the modal component after it has loaded new HTML
 // into the modal body. We use this to wire up dynamic behaviour for the
 // version form (nested installers + custom installer steps).
+function initializeCommonModalFormUI(modalBody) {
+  const form = modalBody.querySelector('form');
+  if (!form) return;
+
+  // Initialize multi-select fields so hidden inputs exist and stay updated.
+  form.querySelectorAll('[data-multi-select]').forEach(group => {
+    const fieldName = group.dataset.multiSelect;
+    if (!fieldName) return;
+    // Avoid double-binding if a page re-calls this initializer.
+    if (group.dataset.multiSelectInitialized === 'true') return;
+    group.dataset.multiSelectInitialized = 'true';
+
+    let hiddenField = form.querySelector(`input[type="hidden"][name="${fieldName}"]`);
+    if (!hiddenField) {
+      hiddenField = document.createElement('input');
+      hiddenField.type = 'hidden';
+      hiddenField.name = fieldName;
+      form.appendChild(hiddenField);
+    }
+
+    function updateHiddenField() {
+      const checkboxes = group.querySelectorAll('input[type="checkbox"]:checked');
+      const values = Array.from(checkboxes)
+        .map(cb => cb.value.trim())
+        .filter(v => v.length > 0);
+      hiddenField.value = values.join(',');
+    }
+
+    group.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+      checkbox.addEventListener('change', updateHiddenField);
+    });
+    updateHiddenField();
+  });
+
+  // Initialize repeatable AD group + scope rows.
+  const container = form.querySelector('[data-ad-group-scope-list]');
+  if (container && container.dataset.adGroupScopeInitialized !== 'true') {
+    container.dataset.adGroupScopeInitialized = 'true';
+    const addBtn = form.querySelector('[data-add-ad-group-scope]');
+    const tmpl = form.querySelector('template[data-ad-group-scope-template]');
+
+    if (addBtn && tmpl) {
+      addBtn.addEventListener('click', () => {
+        const fragment = tmpl.content.cloneNode(true);
+        container.appendChild(fragment);
+      });
+    }
+
+    container.addEventListener('click', (e) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.matches('[data-remove-ad-group-scope]')) {
+        const row = target.closest('.ad-group-scope-row');
+        if (row) row.remove();
+      }
+    });
+  }
+}
+
 window.onModalContentLoaded = function(modalBody) {
+  // Always run the common initializer (package form, cached form, etc.)
+  initializeCommonModalFormUI(modalBody);
+
+  // Version form-specific behaviour
   const form = modalBody.querySelector('form[data-version-form="true"]');
   if (!form) {
     return;

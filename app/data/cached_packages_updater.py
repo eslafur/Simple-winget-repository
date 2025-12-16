@@ -112,7 +112,8 @@ async def update_cached_packages_if_needed() -> None:
                     installer_types=cached_pkg.cache_settings.installer_types if cached_pkg.cache_settings.installer_types else None,
                     version_mode=cached_pkg.cache_settings.version_mode,
                     version_filter=cached_pkg.cache_settings.version_filter,
-                    track_cache=True
+                    track_cache=True,
+                    ad_group_scopes=getattr(cached_pkg, "ad_group_scopes", None),
                 )
             except Exception as e:
                 # Log error but continue with other packages

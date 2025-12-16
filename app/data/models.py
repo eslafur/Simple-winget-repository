@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -13,6 +13,21 @@ class CacheSettings(BaseModel):
     version_mode: str = Field(default="latest", description="'latest' or 'all'")
     version_filter: Optional[str] = Field(default=None, description="Version wildcard filter")
     auto_update: bool = Field(default=True, description="Automatically update this cached package")
+
+
+InstallScope = Literal["user", "machine"]
+
+
+class ADGroupScopeEntry(BaseModel):
+    """
+    One corporate deployment targeting rule.
+
+    If a client reports membership in ad_group, the server may instruct it to
+    install the package using the given scope.
+    """
+
+    ad_group: str = Field(description="Active Directory group name to match against client membership.")
+    scope: InstallScope = Field(description="Install scope ('user' or 'machine').")
 
 
 class SourceAgreement(BaseModel):
@@ -160,6 +175,10 @@ class PackageCommonMetadata(BaseModel):
     tags: List[str] = Field(default_factory=list)
     homepage: Optional[str] = None
     support_url: Optional[str] = None
+    ad_group_scopes: List[ADGroupScopeEntry] = Field(
+        default_factory=list,
+        description="Corporate auto-install targets: AD group name + desired install scope.",
+    )
     cached: bool = Field(
         default=False,
         description="True if this package is a cached package pulled from the WinGet index.",

@@ -102,6 +102,17 @@ except ImportError as e:
 except Exception as e:
     logger.error(f"Error loading auth router: {e}", exc_info=True)
 
+# Client routes (corporate automation)
+try:
+    from app.api.client import router as client_router
+
+    app.include_router(client_router, prefix="/client", tags=["client"])
+    logger.info("Successfully loaded client router")
+except ImportError as e:
+    logger.warning(f"Failed to import client router: {e}")
+except Exception as e:
+    logger.error(f"Error loading client router: {e}", exc_info=True)
+
 
 if __name__ == "__main__":
     """
