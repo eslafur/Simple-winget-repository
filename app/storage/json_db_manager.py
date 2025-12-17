@@ -143,6 +143,10 @@ class JsonDatabaseManager(DatabaseManager):
         version_dir = self._data_dir / target_version.storage_path
         version_json_path = version_dir / "version.json"
         
+        # Generate GUID if not present (should not happen, but ensure it for safety)
+        if not installer.installer_guid:
+            installer.installer_guid = str(uuid.uuid4())
+        
         # Preserve original fields that might not be in the updated model if they were not passed
         # But generally we expect 'installer' to be a complete object or cloned.
         # Ensure we keep storage_path correct.
@@ -301,6 +305,15 @@ class JsonDatabaseManager(DatabaseManager):
                         version_meta = VersionMetadata(**raw)
                     except Exception:
                         continue
+
+                    # Generate GUID if not present and save it back to the JSON file
+                    if not version_meta.installer_guid:
+                        version_meta.installer_guid = str(uuid.uuid4())
+                        # Save the updated version.json with the new GUID
+                        version_json.write_text(
+                            version_meta.model_dump_json(indent=2, exclude_none=True),
+                            encoding="utf-8"
+                        )
 
                     version_meta.storage_path = str(version_dir.relative_to(self._data_dir))
                     package_index.versions.append(version_meta)

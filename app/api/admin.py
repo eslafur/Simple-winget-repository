@@ -1,15 +1,23 @@
+"""
+Admin API endpoints for managing packages, versions, and cached packages.
+
+This module provides the administrative interface for:
+- Creating and editing packages and versions
+- Managing cached packages from the WinGet index
+- Importing packages from upstream WinGet repository
+- Managing custom installers with package.zip generation
+"""
+
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 import hashlib
-import os
 import urllib.parse
 import zipfile
 import tempfile
-import json
 import shutil
+import uuid
 
 from fastapi import (
     APIRouter,
@@ -36,7 +44,7 @@ from app.domain.models import (
     CacheSettings,
 )
 from app.domain.entities import Repository
-from app.core.dependencies import get_repository, get_db_manager, get_data_dir, get_caching_service
+from app.core.dependencies import get_repository, get_caching_service
 from app.services.caching import CachingService
 from app import custom_installer
 
@@ -45,6 +53,21 @@ templates = Jinja2Templates(directory="app/templates")
 
 
 async def require_admin_session(request: Request) -> AuthUser:
+    """
+    Dependency function to require an authenticated admin session.
+    
+    For GET requests, redirects to login page. For other requests,
+    returns 401 Unauthorized if no valid session is found.
+    
+    Args:
+        request: The FastAPI request object.
+        
+    Returns:
+        The authenticated user object.
+        
+    Raises:
+        HTTPException: If user is not authenticated.
+    """
     session_id = request.cookies.get(SESSION_COOKIE_NAME)
     user = get_user_for_session(session_id) if session_id else None
 
@@ -66,13 +89,45 @@ router = APIRouter(dependencies=[Depends(require_admin_session)])
 
 
 def _get_package_or_404(repo: Repository, package_id: str):
+    """
+    Retrieve a package by ID or raise 404 if not found.
+    
+    Args:
+        repo: The repository instance.
+        package_id: The package identifier.
+        
+    Returns:
+        The package entity.
+        
+    Raises:
+        HTTPException: 404 if package not found.
+    """
     pkg = repo.get_package(package_id)
     if not pkg:
         raise HTTPException(status_code=404, detail="Package not found")
     return pkg
 
 
-def _get_version_by_id(repo: Repository, package_id: str, version_id: str) -> Optional[VersionMetadata]:
+def _get_version_by_id(
+    repo: Repository, 
+    package_id: str, 
+    version_id: str
+) -> Optional[VersionMetadata]:
+    """
+    Find a version by its composite ID.
+    
+    Version IDs can be in two formats:
+    - Without GUID: "{version}-{architecture}-{scope}"
+    - With GUID: "{version}-{architecture}-{scope}-{installer_guid}"
+    
+    Args:
+        repo: The repository instance.
+        package_id: The package identifier.
+        version_id: The version identifier (URL-decoded).
+        
+    Returns:
+        The version metadata if found, None otherwise.
+    """
     pkg = _get_package_or_404(repo, package_id)
     for v in pkg.versions:
         parts_no_guid = [v.version, v.architecture]
@@ -94,6 +149,21 @@ def _parse_ad_group_scopes(
     scopes: Optional[List[str]],
     repo: Repository
 ) -> List[ADGroupScopeEntry]:
+    """
+    Parse and validate AD group scope mappings from form data.
+    
+    Takes parallel lists of AD groups and scopes, validates that scopes
+    are allowed by repository configuration, and returns a list of
+    ADGroupScopeEntry objects.
+    
+    Args:
+        groups: List of AD group names (can be None or empty).
+        scopes: List of scope values corresponding to groups.
+        repo: Repository instance for configuration access.
+        
+    Returns:
+        List of validated ADGroupScopeEntry objects.
+    """
     if not groups and not scopes:
         return []
     groups = groups or []
@@ -119,6 +189,23 @@ def _build_custom_installer_package(
     meta: VersionMetadata,
     installer_path: Path
 ) -> tuple[Path, str]:
+    """
+    Build a custom installer package.zip file.
+    
+    Creates a ZIP file containing:
+    - The original installer file (e.g., setup.exe)
+    - An install.bat script generated from the custom installer steps
+    
+    The package.zip is what gets served to clients for custom installers.
+    
+    Args:
+        work_dir: Temporary directory for building the package.
+        meta: Version metadata containing custom installer configuration.
+        installer_path: Path to the original installer file.
+        
+    Returns:
+        Tuple of (package_zip_path, sha256_hash) for the generated package.
+    """
     script_text = custom_installer.render_install_script(meta=meta)
     script_path = work_dir / "install.bat"
     script_path.write_text(script_text, encoding="utf-8", newline="\r\n")
@@ -147,6 +234,23 @@ async def admin_list_packages(
     repo: Repository = Depends(get_repository),
     caching_service: CachingService = Depends(get_caching_service),
 ) -> HTMLResponse:
+    """
+    Display the admin package list page.
+    
+    Shows two separate lists:
+    - Owned packages: Packages created/edited directly in this repository
+    - Cached packages: Packages imported from the WinGet index with caching enabled
+    
+    Also displays the last time the WinGet index was updated.
+    
+    Args:
+        request: FastAPI request object.
+        repo: Repository dependency.
+        caching_service: Caching service dependency.
+        
+    Returns:
+        HTML template response with package lists.
+    """
     packages = repo.get_all_packages()
 
     owned_packages = []
@@ -212,6 +316,17 @@ async def admin_package_detail(
     request: Request,
     repo: Repository = Depends(get_repository)
 ) -> HTMLResponse:
+    """
+    Display the package detail page showing all versions.
+    
+    Args:
+        package_id: The package identifier.
+        request: FastAPI request object.
+        repo: Repository dependency.
+        
+    Returns:
+        HTML template response with package details and versions.
+    """
     pkg = _get_package_or_404(repo, package_id)
     
     versions = sorted(
@@ -236,6 +351,16 @@ async def admin_package_form_fragment_new(
     request: Request,
     repo: Repository = Depends(get_repository)
 ) -> HTMLResponse:
+    """
+    Return the HTML fragment for creating a new package.
+    
+    Args:
+        request: FastAPI request object.
+        repo: Repository dependency.
+        
+    Returns:
+        HTML fragment template for new package form.
+    """
     config = repo.db.get_repository_config()
     return templates.TemplateResponse(
         "admin_package_form_fragment.html",
@@ -254,6 +379,17 @@ async def admin_package_form_fragment(
     request: Request,
     repo: Repository = Depends(get_repository)
 ) -> HTMLResponse:
+    """
+    Return the HTML fragment for editing an existing package.
+    
+    Args:
+        package_id: The package identifier.
+        request: FastAPI request object.
+        repo: Repository dependency.
+        
+    Returns:
+        HTML fragment template for package edit form.
+    """
     pkg = repo.get_package(package_id)
     config = repo.db.get_repository_config()
     
@@ -280,6 +416,23 @@ async def admin_create_package(
     ad_group_scopes_scope: Optional[List[str]] = Form(None),
     repo: Repository = Depends(get_repository)
 ) -> JSONResponse:
+    """
+    Create a new package in the repository.
+    
+    Args:
+        package_identifier: Unique package identifier (e.g., "Publisher.PackageName").
+        package_name: Display name of the package.
+        publisher: Publisher name.
+        short_description: Optional short description.
+        license: Optional license information.
+        tags: Comma-separated list of tags.
+        ad_group_scopes_group: List of AD group names for scope restrictions.
+        ad_group_scopes_scope: List of scope values corresponding to groups.
+        repo: Repository dependency.
+        
+    Returns:
+        JSON response with success status or error message.
+    """
     if repo.get_package(package_identifier):
         return JSONResponse(status_code=400, content={"error": "Package already exists"})
     
@@ -316,6 +469,27 @@ async def admin_save_package(
     ad_group_scopes_scope: Optional[List[str]] = Form(None),
     repo: Repository = Depends(get_repository)
 ) -> JSONResponse:
+    """
+    Update an existing package's metadata.
+    
+    Preserves existing fields like homepage, support_url, and cache settings
+    that are not editable through this form.
+    
+    Args:
+        package_id: The package identifier from the URL path.
+        package_identifier: The package identifier from the form (must match).
+        package_name: Display name of the package.
+        publisher: Publisher name.
+        short_description: Optional short description.
+        license: Optional license information.
+        tags: Comma-separated list of tags.
+        ad_group_scopes_group: List of AD group names for scope restrictions.
+        ad_group_scopes_scope: List of scope values corresponding to groups.
+        repo: Repository dependency.
+        
+    Returns:
+        JSON response with success status or error message.
+    """
     if package_identifier != package_id:
         return JSONResponse(status_code=400, content={"error": "Package identifier mismatch"})
 
@@ -372,6 +546,22 @@ async def admin_version_form_fragment(
     clone_from: Optional[str] = Query(default=None),
     repo: Repository = Depends(get_repository)
 ) -> HTMLResponse:
+    """
+    Return the HTML fragment for creating or editing a version.
+    
+    Supports cloning from an existing version via the clone_from query parameter.
+    When cloning, all installer settings are copied except version, file, and SHA256.
+    
+    Args:
+        package_id: The package identifier.
+        version_id: The version identifier (URL-encoded, "new" for new versions).
+        request: FastAPI request object.
+        clone_from: Optional version ID to clone settings from.
+        repo: Repository dependency.
+        
+    Returns:
+        HTML fragment template for version form.
+    """
     _get_package_or_404(repo, package_id)
     config = repo.db.get_repository_config()
     
@@ -456,17 +646,56 @@ async def admin_save_version(
     upload: UploadFile | None = File(default=None),
     repo: Repository = Depends(get_repository)
 ) -> JSONResponse:
+    """
+    Create or update a package version.
+    
+    Handles both standard installers and custom installers. For custom installers,
+    generates a package.zip file containing the installer and install.bat script.
+    
+    Args:
+        package_id: The package identifier.
+        version_id: The version identifier (URL-encoded, "new" for new versions).
+        version: Version string (e.g., "1.0.0").
+        architecture: Target architecture (e.g., "x64", "x86", "arm64").
+        scope: Installation scope ("user" or "machine").
+        product_code: Optional product code for MSI installers.
+        installer_type: Type of installer ("exe", "msi", "zip", "custom", etc.).
+        silent_arguments: Silent installation arguments.
+        silent_with_progress_arguments: Silent installation with progress arguments.
+        interactive_arguments: Interactive installation arguments.
+        log_arguments: Logging arguments.
+        nested_installer_type: For ZIP installers, the nested installer type.
+        nested_relative_file_path: For ZIP installers, relative paths to nested files.
+        nested_portable_command_alias: For portable ZIP installers, command aliases.
+        custom_action_type: For custom installers, list of action types.
+        custom_arg1: For custom installers, first argument for each action.
+        custom_arg2: For custom installers, second argument for each action.
+        install_mode_interactive: Whether interactive mode is supported.
+        install_mode_silent: Whether silent mode is supported.
+        install_mode_silent_with_progress: Whether silent with progress mode is supported.
+        requires_elevation: Whether elevation is required.
+        package_dependencies: List of package IDs this version depends on.
+        upload: Optional uploaded installer file.
+        repo: Repository dependency.
+        
+    Returns:
+        JSON response with success status or error message.
+    """
     _get_package_or_404(repo, package_id)
     version_id = urllib.parse.unquote(version_id)
     
+    # Check if this is an update to an existing version
     existing_version = None
     if version_id != "new":
         existing_version = _get_version_by_id(repo, package_id, version_id)
         
+    # Validate that we have an installer file (either new upload or existing)
     has_new_upload = upload is not None and upload.filename and len(upload.filename.strip()) > 0
-    
     if not has_new_upload and not existing_version:
-        return JSONResponse(status_code=400, content={"error": "Installer file is required for new versions"})
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Installer file is required for new versions"}
+        )
 
     nested_type_value = None
     nested_files_value = []
@@ -497,14 +726,15 @@ async def admin_save_version(
 
     normalized_dependencies = [d.strip() for d in package_dependencies if d.strip()]
 
+    # Build version metadata object
     meta = VersionMetadata(
         version=version,
         architecture=architecture,
         scope=scope,
         product_code=product_code or None,
         installer_type=installer_type,
-        # installer_file set later
-        installer_sha256=None, # set later
+        installer_file=None,  # Set later based on upload or existing
+        installer_sha256=None,  # Set later after hashing
         silent_arguments=silent_arguments or None,
         silent_with_progress_arguments=silent_with_progress_arguments or None,
         interactive_arguments=interactive_arguments or None,
@@ -521,23 +751,28 @@ async def admin_save_version(
         release_notes=existing_version.release_notes if existing_version else None,
     )
     
+    # Preserve installer GUID if updating existing version
     if existing_version:
         meta.installer_guid = existing_version.installer_guid
     
+    # Ensure GUID exists for new versions (needed for custom installer path resolution)
+    if not meta.installer_guid:
+        meta.installer_guid = str(uuid.uuid4())
+    
     with tempfile.TemporaryDirectory() as tmpdirname:
         work_dir = Path(tmpdirname)
-        
         file_to_add: Optional[Path] = None
+        pkg_zip: Optional[Path] = None
         
-        # Determine if we have a new upload or using existing
+        # Handle file upload or reuse existing file
         if has_new_upload:
             upload_path = work_dir / upload.filename
             content = await upload.read()
             upload_path.write_bytes(content)
             meta.installer_file = upload.filename
             
-            # For non-custom types, we hash the uploaded file now.
-            # For custom types, we hash the package.zip later.
+            # For standard installers, hash the file now
+            # For custom installers, hash the package.zip later
             if installer_type != "custom":
                 h = hashlib.sha256()
                 h.update(content)
@@ -545,187 +780,64 @@ async def admin_save_version(
             
             file_to_add = upload_path
         else:
-            # Re-use existing installer file
+            # Reuse existing installer file
             meta.installer_file = existing_version.installer_file
-            # If standard, keep sha. If custom, we might regenerate zip so sha changes.
+            # For standard installers, keep existing SHA256
+            # For custom installers, we'll regenerate package.zip and recalculate SHA256
             if installer_type != "custom":
                 meta.installer_sha256 = existing_version.installer_sha256
 
-            # Important: For custom installers logic to work (regenerating package.zip),
-            # we need the ORIGINAL installer file to be available.
-            # If we are updating metadata but NOT uploading a new file,
-            # we must ensure the storage manager knows we are keeping the old file
-            # or if we need to regenerate package.zip, we need to fetch the old file first.
-            
-            # If installer_type IS custom, we ALWAYS regenerate package.zip because 
-            # custom arguments might have changed.
-            if installer_type == "custom" and existing_version:
-                # We need to get the path to the current stored installer file (not package.zip)
-                # But our current db abstraction makes this tricky if we don't have the path.
-                # db.get_file_path returns the served file.
-                # For custom, we want the underlying installer_file.
-                
-                # If we rely on db.add_installer/update_installer, passing file_path=None 
-                # implies "keep existing file".
-                # BUT here we want to modify the sidecar package.zip.
-                pass
-
+        # Handle custom installer package.zip generation
         if installer_type == "custom":
-            # We need the installer file (either new upload or existing) to generate package.zip
-            installer_source_path = None
+            installer_source_path: Optional[Path] = None
             
             if has_new_upload:
                 installer_source_path = upload_path
             elif existing_version:
-                # Need to retrieve the existing installer file from storage
-                # to include it in the new package.zip
-                # Since we don't have a direct "get_raw_file" API in repo/db yet that guarantees 
-                # the raw file, we might need to rely on the fact that for custom installers,
-                # the "installer_file" stored in version.json is the raw file name.
-                # And get_file_path (before my recent change) pointed to it?
-                # Actually, my recent change to get_installer_path logic in Entity fixes the SERVING.
-                # The DB still stores the file at `.../installer_file`.
-                
+                # Retrieve the existing installer file from storage
+                # db.get_file_path returns the raw installer file path (not package.zip)
                 try:
-                    # We can use db.get_file_path directly here since we are in admin
-                    # and we know the DB implementation details slightly or use a specific method.
-                    # Wait, Entity.get_installer_path logic is:
-                    # base = db.get_file_path(...) -> returns path to 'installer_file'
-                    # if custom: return parent/package.zip
-                    
-                    # So db.get_file_path(..., version) SHOULD return the raw installer file path
-                    # because that's what's stored in version.json's installer_file field.
-                    
-                    # We need to construct a VersionMetadata that matches the DB record 
-                    # so get_file_path works.
-                    # existing_version has the data.
-                    
-                    # NOTE: We must ensure we are getting the RAW file, not package.zip.
-                    # The default db.get_file_path implementation in JsonDatabaseManager
-                    # returns `_data_dir / storage_path / installer_file`.
-                    # This IS the raw file.
-                    
                     stored_file_path = repo.db.get_file_path(package_id, existing_version)
                     if stored_file_path.exists():
                         installer_source_path = stored_file_path
-                    else:
-                        # Only package.zip might exist if we messed up before?
-                        # Or if we are converting FROM non-custom TO custom?
-                        # If converting from Standard -> Custom, we have installer_file.
-                        pass
                 except Exception:
                     pass
 
-            if installer_source_path and installer_source_path.exists():
-                pkg_zip, zip_hash = _build_custom_installer_package(work_dir, meta, installer_source_path)
-                meta.installer_sha256 = zip_hash
-                
-                # We want to save BOTH the installer file (if new) AND the package.zip.
-                # DB.add/update_installer usually handles ONE file.
-                # If we have a new upload, we pass it as 'file_path'.
-                # But we also need to write 'package.zip'.
-                
-                # 'add_installer' copies 'file_path' to 'installer_file'.
-                # We can manually move package.zip to the destination?
-                # Or we can update DB interface?
-                
-                # Let's rely on DB manager for the main file, and manually place the sidecar 
-                # if we can resolve the path.
-                
-                # But we don't know the destination path inside `add_installer`.
-                
-                # STRATEGY: 
-                # 1. Allow add/update_installer to take the file.
-                # 2. After it returns, we calculate the path again and write package.zip?
-                #    But we don't know the path easily without re-querying.
-                
-                # BETTER: Pass both to DB manager? No, that requires API change.
-                
-                # Hack: 
-                # If we use add_installer, it copies the file.
-                # If we assume we can get the path back?
-                
-                # Let's do this:
-                # 1. Call add_installer/update_installer with the main installer file (upload or None).
-                # 2. Retrieve the stored version to get the path.
-                # 3. Write package.zip to that path.
-                
-                pass
-            else:
-                 return JSONResponse(status_code=400, content={"error": "Original installer file not found for custom package generation"})
+            if not installer_source_path or not installer_source_path.exists():
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Original installer file not found for custom package generation"}
+                )
 
-        # 1. Persist the Version (and main file if new)
+            # Generate package.zip containing installer + install.bat
+            pkg_zip, zip_hash = _build_custom_installer_package(work_dir, meta, installer_source_path)
+            meta.installer_sha256 = zip_hash
+
+        # Save version metadata and installer file
         if has_new_upload:
             repo.db.add_installer(package_id, meta, file_path=file_to_add)
         else:
             repo.db.update_installer(package_id, meta)
 
-        # 2. Handle Custom Installer sidecar (package.zip)
-        if installer_type == "custom":
-             # We need to write package.zip to the storage location.
-             # Fetch the updated version to get storage path.
-             updated_v = _get_version_by_id(repo, package_id, meta.version) # simplistic match might fail if multiple same versions?
-             # Better: use the one we just saved/updated.
-             
-             # Re-fetch is safest to get storage_path.
-             # We can't rely on _get_version_by_id finding the EXACT one if duplicates exist,
-             # but we assume our filtering logic holds.
-             
-             # We can use the meta we passed, but add_installer might have generated a GUID 
-             # if we didn't have one.
-             # If we had existing_version, we reused GUID.
-             
-             # If it was new, we might need to find it.
-             # JsonDB generates GUID if missing.
-             # Let's ensure we have a GUID before calling add_installer if possible?
-             # JsonDB does: if not installer.installer_guid: installer.installer_guid = str(uuid.uuid4())
-             
-             # If we can't easily get the path, we can't save package.zip.
-             
-             # Fix: Generate GUID here if missing, so we can reliably find it.
-             if not meta.installer_guid:
-                 import uuid
-                 meta.installer_guid = str(uuid.uuid4())
-                 # Call add_installer again with explicit GUID
-                 if has_new_upload:
-                      # We called it above... wait, I haven't called it yet in this flow.
-                      pass
-
-             # Refined Flow:
-             # 1. Ensure GUID.
-             if not meta.installer_guid:
-                 import uuid
-                 meta.installer_guid = str(uuid.uuid4())
-
-             # 2. Save metadata + main file
-             if has_new_upload:
-                 repo.db.add_installer(package_id, meta, file_path=file_to_add)
-             else:
-                 repo.db.update_installer(package_id, meta)
-                 
-             # 3. Generate and save package.zip
-             # Now we can ask DB for the path using the GUID
-             try:
-                 # Re-construct a temporary meta object just for get_file_path lookups if needed
-                 # or fetch the actual stored object.
-                 saved_path = repo.db.get_file_path(package_id, meta)
-                 # saved_path points to the installer_file (e.g. setup.exe)
-                 
-                 package_zip_dest = saved_path.parent / "package.zip"
-                 
-                 # We have the generated package.zip in work_dir
-                 # We generated it above: pkg_zip
-                 if 'pkg_zip' in locals() and pkg_zip and pkg_zip.exists():
-                     shutil.copy2(pkg_zip, package_zip_dest)
-                     
-             except Exception as e:
-                 # Log error?
-                 print(f"Failed to save package.zip: {e}")
-                 return JSONResponse(status_code=500, content={"error": "Failed to save custom installer package"})
-
-        # For non-custom, we are done (add_installer/update_installer handled it)
+        # Save package.zip sidecar for custom installers
+        if installer_type == "custom" and pkg_zip and pkg_zip.exists():
+            try:
+                # Get the storage path where the installer file was saved
+                saved_path = repo.db.get_file_path(package_id, meta)
+                # saved_path points to the installer_file (e.g., setup.exe)
+                # package.zip should be in the same directory
+                package_zip_dest = saved_path.parent / "package.zip"
+                shutil.copy2(pkg_zip, package_zip_dest)
+            except Exception as e:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": f"Failed to save custom installer package: {str(e)}"}
+                )
         
-    return JSONResponse(status_code=200, content={"success": True, "message": "Version saved successfully"})
+    return JSONResponse(
+        status_code=200,
+        content={"success": True, "message": "Version saved successfully"}
+    )
 
 
 @router.post("/admin/packages/{package_id}/versions/{version_id}/delete")
@@ -734,6 +846,17 @@ async def admin_delete_version(
     version_id: str,
     repo: Repository = Depends(get_repository)
 ) -> JSONResponse:
+    """
+    Delete a specific version of a package.
+    
+    Args:
+        package_id: The package identifier.
+        version_id: The version identifier (URL-encoded).
+        repo: Repository dependency.
+        
+    Returns:
+        JSON response with success status or error message.
+    """
     version_id = urllib.parse.unquote(version_id)
     v = _get_version_by_id(repo, package_id, version_id)
     if not v:
@@ -749,6 +872,16 @@ async def admin_delete_package(
     package_id: str,
     repo: Repository = Depends(get_repository)
 ) -> JSONResponse:
+    """
+    Delete an entire package and all its versions.
+    
+    Args:
+        package_id: The package identifier.
+        repo: Repository dependency.
+        
+    Returns:
+        JSON response with success status.
+    """
     repo.db.delete_package(package_id)
     return JSONResponse(status_code=200, content={"success": True, "message": "Package deleted successfully"})
 
@@ -762,11 +895,29 @@ async def admin_delete_package(
 async def admin_update_winget_index(
     caching_service: CachingService = Depends(get_caching_service)
 ) -> JSONResponse:
+    """
+    Update the cached WinGet index from the upstream repository.
+    
+    Downloads the latest manifest index from the public WinGet repository
+    and caches it locally for package search and import operations.
+    
+    Args:
+        caching_service: Caching service dependency.
+        
+    Returns:
+        JSON response with success status and index path, or error message.
+    """
     try:
         index_path = await caching_service.update_index()
-        return JSONResponse(status_code=200, content={"success": True, "message": "Index updated successfully", "index_path": str(index_path)})
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "message": "Index updated successfully", "index_path": str(index_path)}
+        )
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"Failed to update index: {str(e)}"})
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to update index: {str(e)}"}
+        )
 
 
 @router.get("/admin/winget/search")
@@ -774,6 +925,16 @@ async def admin_winget_search(
     q: str = Query(..., description="Search query for package ID or name"),
     caching_service: CachingService = Depends(get_caching_service)
 ) -> JSONResponse:
+    """
+    Search for packages in the upstream WinGet repository.
+    
+    Args:
+        q: Search query string (package ID or name).
+        caching_service: Caching service dependency.
+        
+    Returns:
+        JSON response with matching packages or error message.
+    """
     try:
         results = caching_service.search_upstream_packages(q)
         return JSONResponse(status_code=200, content={"success": True, "packages": results})
@@ -788,6 +949,18 @@ async def admin_winget_package_versions(
     scope: Optional[str] = Query(None),
     caching_service: CachingService = Depends(get_caching_service)
 ) -> JSONResponse:
+    """
+    Get available versions for a package from the upstream WinGet repository.
+    
+    Args:
+        package_id: The package identifier to look up.
+        architecture: Optional architecture filter (e.g., "x64", "x86").
+        scope: Optional scope filter ("user" or "machine").
+        caching_service: Caching service dependency.
+        
+    Returns:
+        JSON response with available versions or error message.
+    """
     try:
         versions = await caching_service.get_upstream_package_versions(package_id, architecture, scope)
         return JSONResponse(status_code=200, content={"success": True, "versions": versions})
@@ -805,6 +978,24 @@ async def admin_winget_import_package(
     version_filter: Optional[str] = Query(None),
     caching_service: CachingService = Depends(get_caching_service)
 ) -> JSONResponse:
+    """
+    Import a package from the upstream WinGet repository.
+    
+    Downloads and imports package versions matching the specified filters.
+    This creates a regular (non-cached) package in the repository.
+    
+    Args:
+        package_id: The package identifier to import.
+        architectures: Comma-separated list of architectures to filter (e.g., "x64,x86").
+        scopes: Comma-separated list of scopes to filter (e.g., "user,machine").
+        installer_types: Comma-separated list of installer types to filter (e.g., "exe,msi").
+        version_mode: Version import mode ("latest" or "all").
+        version_filter: Optional version filter string.
+        caching_service: Caching service dependency.
+        
+    Returns:
+        JSON response with import result or error message.
+    """
     arch_list = [a.strip() for a in architectures.split(",")] if architectures else None
     scope_list = [s.strip() for s in scopes.split(",")] if scopes else None
     type_list = [t.strip() for t in installer_types.split(",")] if installer_types else None
@@ -833,6 +1024,19 @@ async def admin_new_cached_package_fragment(
     request: Request,
     repo: Repository = Depends(get_repository)
 ) -> HTMLResponse:
+    """
+    Return the HTML fragment for creating a new cached package.
+    
+    Cached packages are automatically synced from the upstream WinGet repository
+    based on configured filters.
+    
+    Args:
+        request: FastAPI request object.
+        repo: Repository dependency.
+        
+    Returns:
+        HTML fragment template for new cached package form.
+    """
     config = repo.db.get_repository_config()
     return templates.TemplateResponse(
         "admin_cached_package_form_fragment.html",
@@ -858,6 +1062,28 @@ async def admin_new_cached_package(
     repo: Repository = Depends(get_repository),
     caching_service: CachingService = Depends(get_caching_service),
 ) -> JSONResponse:
+    """
+    Create a new cached package from the upstream WinGet repository.
+    
+    Cached packages automatically sync versions from the upstream repository
+    based on the configured filters. The package is marked as cached and will
+    be updated when the index is refreshed.
+    
+    Args:
+        package_id: The package identifier to cache from upstream.
+        architectures: Comma-separated list of architectures to filter.
+        scopes: Comma-separated list of scopes to filter.
+        installer_types: Comma-separated list of installer types to filter.
+        version_mode: Version import mode ("latest" or "all").
+        version_filter: Optional version filter string.
+        ad_group_scopes_group: List of AD group names for scope restrictions.
+        ad_group_scopes_scope: List of scope values corresponding to groups.
+        repo: Repository dependency.
+        caching_service: Caching service dependency.
+        
+    Returns:
+        JSON response with import result or error message.
+    """
     arch_list = [a.strip() for a in architectures.split(",") if a.strip()] if architectures and architectures.strip() else None
     scope_list = [s.strip() for s in scopes.split(",") if s.strip()] if scopes and scopes.strip() else None
     type_list = None
@@ -889,6 +1115,20 @@ async def admin_cached_package_detail(
     package_id: str,
     repo: Repository = Depends(get_repository)
 ) -> HTMLResponse:
+    """
+    Display the cached package detail page showing all cached versions.
+    
+    Args:
+        request: FastAPI request object.
+        package_id: The package identifier.
+        repo: Repository dependency.
+        
+    Returns:
+        HTML template response with cached package details.
+        
+    Raises:
+        HTTPException: 404 if cached package not found.
+    """
     pkg = repo.get_package(package_id)
     if not pkg or not pkg.metadata.cached:
         raise HTTPException(status_code=404, detail="Cached package not found")
@@ -916,6 +1156,20 @@ async def admin_cached_package_form_fragment(
     package_id: str,
     repo: Repository = Depends(get_repository)
 ) -> HTMLResponse:
+    """
+    Return the HTML fragment for editing a cached package's settings.
+    
+    Args:
+        request: FastAPI request object.
+        package_id: The package identifier.
+        repo: Repository dependency.
+        
+    Returns:
+        HTML fragment template for cached package edit form.
+        
+    Raises:
+        HTTPException: 404 if cached package not found.
+    """
     pkg = repo.get_package(package_id)
     if not pkg or not pkg.metadata.cached:
         raise HTTPException(status_code=404, detail="Cached package not found")
@@ -947,6 +1201,28 @@ async def admin_save_cached_package(
     repo: Repository = Depends(get_repository),
     caching_service: CachingService = Depends(get_caching_service),
 ) -> JSONResponse:
+    """
+    Update a cached package's filter settings and re-import versions.
+    
+    Updates the cache settings and triggers a re-import of versions from
+    the upstream repository based on the new filters.
+    
+    Args:
+        package_id: The package identifier from the URL path.
+        package_id_from_form: The package identifier from the form (must match).
+        architectures: Comma-separated list of architectures to filter.
+        scopes: Comma-separated list of scopes to filter.
+        installer_types: Comma-separated list of installer types to filter.
+        version_mode: Version import mode ("latest" or "all").
+        version_filter: Optional version filter string.
+        ad_group_scopes_group: List of AD group names for scope restrictions.
+        ad_group_scopes_scope: List of scope values corresponding to groups.
+        repo: Repository dependency.
+        caching_service: Caching service dependency.
+        
+    Returns:
+        JSON response with success status or error message.
+    """
     if package_id_from_form != package_id:
         return JSONResponse(status_code=400, content={"error": "Package identifier mismatch"})
 
@@ -1014,6 +1290,19 @@ async def admin_cached_package_delete(
     package_id: str,
     repo: Repository = Depends(get_repository)
 ) -> JSONResponse:
+    """
+    Remove a cached package from the repository.
+    
+    Deletes the package and all its cached versions. This does not affect
+    the upstream repository.
+    
+    Args:
+        package_id: The package identifier.
+        repo: Repository dependency.
+        
+    Returns:
+        JSON response with success status or error message.
+    """
     pkg = repo.get_package(package_id)
     if not pkg or not pkg.metadata.cached:
         return JSONResponse(status_code=404, content={"error": "Cached package not found"})
@@ -1028,6 +1317,20 @@ async def admin_delete_cached_version(
     version_id: str,
     repo: Repository = Depends(get_repository)
 ) -> JSONResponse:
+    """
+    Delete a specific version from a cached package.
+    
+    Removes a single cached version. The version may be re-imported on the
+    next cache update if it still matches the package's filter settings.
+    
+    Args:
+        package_id: The package identifier.
+        version_id: The version identifier (URL-encoded).
+        repo: Repository dependency.
+        
+    Returns:
+        JSON response with success status or error message.
+    """
     version_id = urllib.parse.unquote(version_id)
     pkg = repo.get_package(package_id)
     if not pkg or not pkg.metadata.cached:
