@@ -40,7 +40,6 @@ logger = logging.getLogger(__name__)
 
 WINGET_BASE_URL = "https://cdn.winget.microsoft.com/cache"
 INDEX_PACKAGE_V2 = "source2.msix"
-INDEX_PACKAGE_V1 = "source.msix"
 INDEX_DB_PATH = "Public/index.db"
 
 
@@ -60,43 +59,34 @@ class CachingService:
         self.data_dir = get_data_dir()
         self.cache_dir = self.data_dir / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Determine index path (try new location first, fallback to old)
-        self.index_path = self.cache_dir / "winget_index" / "index.db"
-        if not self.index_path.exists():
-            self.index_path = self.cache_dir / "index.db"
+        self.index_path = self.cache_dir  / "index.db"
+        self.status_path = self.cache_dir / "winget_index_status.json"
     
     # ========================================================================
     # Index Management
     # ========================================================================
     
-    def _get_status_path(self) -> Path:
-        """Get path to index status JSON file."""
-        return self.cache_dir / "winget_index_status.json"
-    
     def _update_status(self, last_pulled: datetime = None):
         """Update the index status file."""
-        status_path = self._get_status_path()
-        status_path.parent.mkdir(parents=True, exist_ok=True)
+        self.status_path.parent.mkdir(parents=True, exist_ok=True)
         data = {}
-        if status_path.exists():
+        if self.status_path.exists():
             try:
-                data = json.loads(status_path.read_text(encoding="utf-8"))
+                data = json.loads(self.status_path.read_text(encoding="utf-8"))
             except Exception:
                 pass
         
         if last_pulled:
             data["last_pulled"] = last_pulled.isoformat()
             
-        status_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        self.status_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     
     def get_index_status(self) -> Dict[str, Any]:
         """Get the status of the WinGet index."""
-        status_path = self._get_status_path()
         last_pulled = None
-        if status_path.exists():
+        if self.status_path.exists():
             try:
-                data = json.loads(status_path.read_text(encoding="utf-8"))
+                data = json.loads(self.status_path.read_text(encoding="utf-8"))
                 if data.get("last_pulled"):
                     last_pulled = datetime.fromisoformat(data["last_pulled"])
             except Exception:
@@ -122,99 +112,86 @@ class CachingService:
         Returns:
             Path to the extracted index.db file
         """
-        index_dir = self.cache_dir / "winget_index"
-        index_dir.mkdir(parents=True, exist_ok=True)
         
-        # Always write the extracted DB to a stable location
-        index_db_path = index_dir / "index.db"
+        package_name = INDEX_PACKAGE_V2
+        package_url = f"{self.base_url}/{package_name}"
+        package_path = self.cache_dir / package_name
+        package_tmp_path = self.cache_dir / f"{package_name}.tmp"
         
-        # Try source2.msix first, fallback to source.msix
-        for package_name in [INDEX_PACKAGE_V2, INDEX_PACKAGE_V1]:
-            package_url = f"{self.base_url}/{package_name}"
-            package_path = index_dir / package_name
-            package_tmp_path = index_dir / f"{package_name}.tmp"
+        try:
+            logger.info(f"Downloading {package_name}...")
+            # Download to a temp file first to avoid leaving partial/corrupt MSIX behind
+            if package_tmp_path.exists():
+                package_tmp_path.unlink()
+
+            # Basic retry loop for flaky connections
+            last_error: Exception | None = None
+            for attempt in range(1, 4):
+                try:
+                    async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+                        async with client.stream("GET", package_url) as response:
+                            response.raise_for_status()
+
+                            total_size = int(response.headers.get("content-length", 0))
+                            downloaded = 0
+
+                            async with aiofiles.open(package_tmp_path, "wb") as f:
+                                async for chunk in response.aiter_bytes():
+                                    await f.write(chunk)
+                                    downloaded += len(chunk)
+                                    if total_size > 0:
+                                        percent = (downloaded / total_size) * 100
+                                        logger.debug(f"Progress: {percent:.1f}%")
+                    last_error = None
+                    break
+                except Exception as e:
+                    last_error = e
+                    # Clean up temp file and retry
+                    if package_tmp_path.exists():
+                        package_tmp_path.unlink(missing_ok=True)
+                    if attempt < 3:
+                        logger.warning(f"Download failed (attempt {attempt}/3): {e}. Retrying...")
+                        await asyncio.sleep(1.0 * attempt)
+                    else:
+                        raise
+
+            if last_error:
+                raise last_error
+
+            # Move temp file into place
+            if package_path.exists():
+                package_path.unlink(missing_ok=True)
+            package_tmp_path.replace(package_path)
             
-            try:
-                logger.info(f"Downloading {package_name}...")
-                # Download to a temp file first to avoid leaving partial/corrupt MSIX behind
-                if package_tmp_path.exists():
-                    package_tmp_path.unlink()
+            logger.info(f"Extracting index.db from {package_name}...")
+            
+            # Extract index.db from MSIX (MSIX is a ZIP file)
+            with zipfile.ZipFile(package_path, "r") as zip_ref:
+                if INDEX_DB_PATH not in zip_ref.namelist():
+                    raise ValueError(f"{INDEX_DB_PATH} not found in {package_name}")
 
-                # Basic retry loop for flaky connections
-                last_error: Exception | None = None
-                for attempt in range(1, 4):
-                    try:
-                        async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
-                            async with client.stream("GET", package_url) as response:
-                                response.raise_for_status()
+                # Ensure target doesn't exist / isn't locked
+                if self.index_path.exists():
+                    self.index_path.unlink(missing_ok=True)
 
-                                total_size = int(response.headers.get("content-length", 0))
-                                downloaded = 0
+                with zip_ref.open(INDEX_DB_PATH, "r") as src, open(self.index_path, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
 
-                                async with aiofiles.open(package_tmp_path, "wb") as f:
-                                    async for chunk in response.aiter_bytes():
-                                        await f.write(chunk)
-                                        downloaded += len(chunk)
-                                        if total_size > 0:
-                                            percent = (downloaded / total_size) * 100
-                                            logger.debug(f"Progress: {percent:.1f}%")
-                        last_error = None
-                        break
-                    except Exception as e:
-                        last_error = e
-                        # Clean up temp file and retry
-                        if package_tmp_path.exists():
-                            package_tmp_path.unlink(missing_ok=True)
-                        if attempt < 3:
-                            logger.warning(f"Download failed (attempt {attempt}/3): {e}. Retrying...")
-                            await asyncio.sleep(1.0 * attempt)
-                        else:
-                            raise
+            logger.info(f"Index database extracted to: {self.index_path}")
 
-                if last_error:
-                    raise last_error
 
-                # Move temp file into place
-                if package_path.exists():
-                    package_path.unlink(missing_ok=True)
-                package_tmp_path.replace(package_path)
-                
-                logger.info(f"Extracting index.db from {package_name}...")
-                
-                # Extract index.db from MSIX (MSIX is a ZIP file)
-                with zipfile.ZipFile(package_path, "r") as zip_ref:
-                    if INDEX_DB_PATH not in zip_ref.namelist():
-                        logger.warning(f"Warning: {INDEX_DB_PATH} not found in {package_name}")
-                        continue
 
-                    # Ensure target doesn't exist / isn't locked
-                    if index_db_path.exists():
-                        index_db_path.unlink(missing_ok=True)
-
-                    with zip_ref.open(INDEX_DB_PATH, "r") as src, open(index_db_path, "wb") as dst:
-                        shutil.copyfileobj(src, dst)
-
-                logger.info(f"Index database extracted to: {index_db_path}")
-
-                # Best-effort cleanup of legacy extracted folder
-                public_dir = index_dir / "Public"
-                if public_dir.exists():
-                    shutil.rmtree(public_dir, ignore_errors=True)
-
-                # Update index path reference and status
-                self.index_path = index_db_path
-                self._update_status(last_pulled=datetime.now())
-                return index_db_path
-                        
-            except Exception as e:
-                logger.error(f"Failed to download {package_name}: {e}")
-                if package_tmp_path.exists():
-                    package_tmp_path.unlink(missing_ok=True)
-                if package_path.exists():
-                    package_path.unlink(missing_ok=True)
-                continue
-        
-        raise Exception("Failed to download and extract index from both source2.msix and source.msix")
+            # Update index path reference and status
+            self._update_status(last_pulled=datetime.now())
+            return self.index_path
+                    
+        except Exception as e:
+            logger.error(f"Failed to download {package_name}: {e}")
+            if package_tmp_path.exists():
+                package_tmp_path.unlink(missing_ok=True)
+            if package_path.exists():
+                package_path.unlink(missing_ok=True)
+            raise
     
     # ========================================================================
     # Index Querying
@@ -969,7 +946,7 @@ class CachingService:
             
             for pkg_index in all_packages:
                 pkg = pkg_index.package
-                if not pkg.cached or not pkg.cache_settings or not pkg.cache_settings.auto_update:
+                if not pkg.cached or not pkg.cache_settings.auto_update:
                     continue
                 
                 logger.info(f"Checking updates for {pkg.package_identifier}")
