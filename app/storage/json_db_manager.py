@@ -143,6 +143,11 @@ class JsonDatabaseManager(DatabaseManager):
         version_dir = self._data_dir / target_version.storage_path
         version_json_path = version_dir / "version.json"
         
+        # Preserve original fields that might not be in the updated model if they were not passed
+        # But generally we expect 'installer' to be a complete object or cloned.
+        # Ensure we keep storage_path correct.
+        installer.storage_path = target_version.storage_path
+
         version_json_path.write_text(installer.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
         
         if installer is not target_version:

@@ -389,6 +389,35 @@ class WinGetPackageImporter:
         version = version_data["version"]
         arch = version_data["architecture"] or "x64"
         scp = version_data["scope"] or "user"
+        inst_type = version_data.get("installer_type") or "exe"
+
+        # Check if identical installer already exists
+        pkg_index = self.db.get_package(package_id)
+        if pkg_index:
+            for v in pkg_index.versions:
+                v_scope = (v.scope or "user").lower()
+                req_scope = (scp or "user").lower()
+                
+                v_arch = (v.architecture or "").lower()
+                req_arch = (arch or "").lower()
+                
+                v_type = (v.installer_type or "exe").lower()
+                req_type = (inst_type or "exe").lower()
+                
+                if (v.version == version and 
+                    v_arch == req_arch and 
+                    v_scope == req_scope and 
+                    v_type == req_type):
+                    
+                    logger.info(f"Skipping existing installer for {package_id} {version} {arch} {scp}")
+                    return {
+                        "status": "skipped",
+                        "version": version,
+                        "architecture": arch,
+                        "scope": scp,
+                        "installer_file": v.installer_file
+                    }
+
         installer_info = version_data["installer"]
         
         installer_url = installer_info["url"]

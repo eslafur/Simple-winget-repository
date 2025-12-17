@@ -529,34 +529,202 @@ async def admin_save_version(
         
         file_to_add: Optional[Path] = None
         
+        # Determine if we have a new upload or using existing
         if has_new_upload:
             upload_path = work_dir / upload.filename
             content = await upload.read()
             upload_path.write_bytes(content)
             meta.installer_file = upload.filename
             
-            h = hashlib.sha256()
-            h.update(content)
-            meta.installer_sha256 = h.hexdigest()
+            # For non-custom types, we hash the uploaded file now.
+            # For custom types, we hash the package.zip later.
+            if installer_type != "custom":
+                h = hashlib.sha256()
+                h.update(content)
+                meta.installer_sha256 = h.hexdigest()
             
             file_to_add = upload_path
         else:
+            # Re-use existing installer file
             meta.installer_file = existing_version.installer_file
-            meta.installer_sha256 = existing_version.installer_sha256
-        
-        if installer_type == "custom":
-            if has_new_upload:
-                pkg_zip, zip_hash = _build_custom_installer_package(work_dir, meta, upload_path)
-                meta.installer_sha256 = zip_hash
-                file_to_add = pkg_zip
-            else:
+            # If standard, keep sha. If custom, we might regenerate zip so sha changes.
+            if installer_type != "custom":
+                meta.installer_sha256 = existing_version.installer_sha256
+
+            # Important: For custom installers logic to work (regenerating package.zip),
+            # we need the ORIGINAL installer file to be available.
+            # If we are updating metadata but NOT uploading a new file,
+            # we must ensure the storage manager knows we are keeping the old file
+            # or if we need to regenerate package.zip, we need to fetch the old file first.
+            
+            # If installer_type IS custom, we ALWAYS regenerate package.zip because 
+            # custom arguments might have changed.
+            if installer_type == "custom" and existing_version:
+                # We need to get the path to the current stored installer file (not package.zip)
+                # But our current db abstraction makes this tricky if we don't have the path.
+                # db.get_file_path returns the served file.
+                # For custom, we want the underlying installer_file.
+                
+                # If we rely on db.add_installer/update_installer, passing file_path=None 
+                # implies "keep existing file".
+                # BUT here we want to modify the sidecar package.zip.
                 pass
 
+        if installer_type == "custom":
+            # We need the installer file (either new upload or existing) to generate package.zip
+            installer_source_path = None
+            
+            if has_new_upload:
+                installer_source_path = upload_path
+            elif existing_version:
+                # Need to retrieve the existing installer file from storage
+                # to include it in the new package.zip
+                # Since we don't have a direct "get_raw_file" API in repo/db yet that guarantees 
+                # the raw file, we might need to rely on the fact that for custom installers,
+                # the "installer_file" stored in version.json is the raw file name.
+                # And get_file_path (before my recent change) pointed to it?
+                # Actually, my recent change to get_installer_path logic in Entity fixes the SERVING.
+                # The DB still stores the file at `.../installer_file`.
+                
+                try:
+                    # We can use db.get_file_path directly here since we are in admin
+                    # and we know the DB implementation details slightly or use a specific method.
+                    # Wait, Entity.get_installer_path logic is:
+                    # base = db.get_file_path(...) -> returns path to 'installer_file'
+                    # if custom: return parent/package.zip
+                    
+                    # So db.get_file_path(..., version) SHOULD return the raw installer file path
+                    # because that's what's stored in version.json's installer_file field.
+                    
+                    # We need to construct a VersionMetadata that matches the DB record 
+                    # so get_file_path works.
+                    # existing_version has the data.
+                    
+                    # NOTE: We must ensure we are getting the RAW file, not package.zip.
+                    # The default db.get_file_path implementation in JsonDatabaseManager
+                    # returns `_data_dir / storage_path / installer_file`.
+                    # This IS the raw file.
+                    
+                    stored_file_path = repo.db.get_file_path(package_id, existing_version)
+                    if stored_file_path.exists():
+                        installer_source_path = stored_file_path
+                    else:
+                        # Only package.zip might exist if we messed up before?
+                        # Or if we are converting FROM non-custom TO custom?
+                        # If converting from Standard -> Custom, we have installer_file.
+                        pass
+                except Exception:
+                    pass
+
+            if installer_source_path and installer_source_path.exists():
+                pkg_zip, zip_hash = _build_custom_installer_package(work_dir, meta, installer_source_path)
+                meta.installer_sha256 = zip_hash
+                
+                # We want to save BOTH the installer file (if new) AND the package.zip.
+                # DB.add/update_installer usually handles ONE file.
+                # If we have a new upload, we pass it as 'file_path'.
+                # But we also need to write 'package.zip'.
+                
+                # 'add_installer' copies 'file_path' to 'installer_file'.
+                # We can manually move package.zip to the destination?
+                # Or we can update DB interface?
+                
+                # Let's rely on DB manager for the main file, and manually place the sidecar 
+                # if we can resolve the path.
+                
+                # But we don't know the destination path inside `add_installer`.
+                
+                # STRATEGY: 
+                # 1. Allow add/update_installer to take the file.
+                # 2. After it returns, we calculate the path again and write package.zip?
+                #    But we don't know the path easily without re-querying.
+                
+                # BETTER: Pass both to DB manager? No, that requires API change.
+                
+                # Hack: 
+                # If we use add_installer, it copies the file.
+                # If we assume we can get the path back?
+                
+                # Let's do this:
+                # 1. Call add_installer/update_installer with the main installer file (upload or None).
+                # 2. Retrieve the stored version to get the path.
+                # 3. Write package.zip to that path.
+                
+                pass
+            else:
+                 return JSONResponse(status_code=400, content={"error": "Original installer file not found for custom package generation"})
+
+        # 1. Persist the Version (and main file if new)
         if has_new_upload:
             repo.db.add_installer(package_id, meta, file_path=file_to_add)
         else:
             repo.db.update_installer(package_id, meta)
 
+        # 2. Handle Custom Installer sidecar (package.zip)
+        if installer_type == "custom":
+             # We need to write package.zip to the storage location.
+             # Fetch the updated version to get storage path.
+             updated_v = _get_version_by_id(repo, package_id, meta.version) # simplistic match might fail if multiple same versions?
+             # Better: use the one we just saved/updated.
+             
+             # Re-fetch is safest to get storage_path.
+             # We can't rely on _get_version_by_id finding the EXACT one if duplicates exist,
+             # but we assume our filtering logic holds.
+             
+             # We can use the meta we passed, but add_installer might have generated a GUID 
+             # if we didn't have one.
+             # If we had existing_version, we reused GUID.
+             
+             # If it was new, we might need to find it.
+             # JsonDB generates GUID if missing.
+             # Let's ensure we have a GUID before calling add_installer if possible?
+             # JsonDB does: if not installer.installer_guid: installer.installer_guid = str(uuid.uuid4())
+             
+             # If we can't easily get the path, we can't save package.zip.
+             
+             # Fix: Generate GUID here if missing, so we can reliably find it.
+             if not meta.installer_guid:
+                 import uuid
+                 meta.installer_guid = str(uuid.uuid4())
+                 # Call add_installer again with explicit GUID
+                 if has_new_upload:
+                      # We called it above... wait, I haven't called it yet in this flow.
+                      pass
+
+             # Refined Flow:
+             # 1. Ensure GUID.
+             if not meta.installer_guid:
+                 import uuid
+                 meta.installer_guid = str(uuid.uuid4())
+
+             # 2. Save metadata + main file
+             if has_new_upload:
+                 repo.db.add_installer(package_id, meta, file_path=file_to_add)
+             else:
+                 repo.db.update_installer(package_id, meta)
+                 
+             # 3. Generate and save package.zip
+             # Now we can ask DB for the path using the GUID
+             try:
+                 # Re-construct a temporary meta object just for get_file_path lookups if needed
+                 # or fetch the actual stored object.
+                 saved_path = repo.db.get_file_path(package_id, meta)
+                 # saved_path points to the installer_file (e.g. setup.exe)
+                 
+                 package_zip_dest = saved_path.parent / "package.zip"
+                 
+                 # We have the generated package.zip in work_dir
+                 # We generated it above: pkg_zip
+                 if 'pkg_zip' in locals() and pkg_zip and pkg_zip.exists():
+                     shutil.copy2(pkg_zip, package_zip_dest)
+                     
+             except Exception as e:
+                 # Log error?
+                 print(f"Failed to save package.zip: {e}")
+                 return JSONResponse(status_code=500, content={"error": "Failed to save custom installer package"})
+
+        # For non-custom, we are done (add_installer/update_installer handled it)
+        
     return JSONResponse(status_code=200, content={"success": True, "message": "Version saved successfully"})
 
 
@@ -834,7 +1002,6 @@ async def admin_save_cached_package(
             installer_types=type_list if type_list else None,
             version_mode=version_mode,
             version_filter=new_cache_settings.version_filter,
-            track_cache=True,
             ad_group_scopes=ad_group_scopes_entries or getattr(current, "ad_group_scopes", []) or [],
         )
         return JSONResponse(status_code=200, content={"success": True, "message": "Cached package updated successfully"})

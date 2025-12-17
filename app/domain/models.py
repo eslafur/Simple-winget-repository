@@ -384,3 +384,24 @@ class AuthenticationStore(BaseModel):
     users: List[AuthUser] = Field(default_factory=list)
     sessions: List[AuthSession] = Field(default_factory=list)
 
+
+# ---------------------------------------------------------------------------
+# API Request Models
+# ---------------------------------------------------------------------------
+
+class RequestMatch(BaseModel):
+    KeyWord: Optional[str] = None
+    MatchType: Optional[str] = None
+
+
+class PackageMatchFilter(BaseModel):
+    PackageMatchField: str
+    RequestMatch: RequestMatch
+
+
+class ManifestSearchRequest(BaseModel):
+    MaximumResults: Optional[int] = None
+    FetchAllManifests: Optional[bool] = None
+    Query: Optional[RequestMatch] = None
+    Inclusions: List[PackageMatchFilter] = []
+    Filters: List[PackageMatchFilter] = []

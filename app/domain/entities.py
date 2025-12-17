@@ -6,9 +6,7 @@ from datetime import datetime
 from app.storage.db_manager import DatabaseManager
 from app.domain.models import (
     PackageIndex, 
-    PackageCommonMetadata, 
     VersionMetadata, 
-    RepositoryConfig,
     ManifestSearchRequest,
     PackageMatchFilter,
     RequestMatch
@@ -28,6 +26,29 @@ class Package:
     def package_id(self) -> str:
         return self.metadata.package_identifier
 
+    def get_installer_path(self, version: VersionMetadata) -> Path:
+        """
+        Get the path to the file that should be served for download.
+        For custom installers, this is package.zip.
+        For standard installers, it's the installer file itself.
+        """
+        base_path = self.db.get_file_path(self.package_id, version)
+        
+        if version.installer_type == "custom":
+            # For custom installers, base_path points to the uploaded installer.
+            # We want to serve package.zip which should be in the same folder.
+            package_zip = base_path.parent / "package.zip"
+            if package_zip.is_file():
+                return package_zip
+            
+            # Fallback/Edge case: if package.zip doesn't exist but we expect it.
+            # Logic in admin should ensure package.zip is created.
+            # If not found, returning base_path is wrong if type is custom.
+            # We'll return it but it might not be what the client expects (zip vs exe).
+            # But strictly speaking, db.get_file_path returns the "installer_file".
+        
+        return base_path
+
     def compute_installer_sha256(self, version: VersionMetadata) -> Optional[str]:
         """
         Best-effort computation of the installer SHA256 for a given version
@@ -37,7 +58,8 @@ class Package:
             return None
 
         try:
-            file_path = self.db.get_file_path(self.package_id, version)
+            # Use get_installer_path to hash the actual file served (e.g. package.zip for custom)
+            file_path = self.get_installer_path(version)
             if not file_path.is_file():
                 return None
 

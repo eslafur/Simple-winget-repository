@@ -181,43 +181,17 @@ async def download_installer(
          raise HTTPException(status_code=404, detail="Installer file is not defined for this version")
 
     try:
-        file_path = repo.db.get_file_path(package_id, target_version)
+        # Use get_installer_path to determine correct file to serve
+        # For custom installers, this logic is now encapsulated there.
+        served_path = pkg.get_installer_path(target_version)
     except ValueError:
          raise HTTPException(status_code=500, detail="Storage path not available")
 
-    # For custom installer types we serve the generated package.zip
-    # But get_file_path returns the raw installer file path usually?
-    # Wait, 'custom' type logic:
-    # "The uploaded installer file name is stored in installer_file; the generated package.zip... is what WinGet will download"
-    # The OLD code logic:
-    # if v.installer_type == "custom": installer_filename = "package.zip" else ... = v.installer_file
-    # installer_path = data_dir / v.storage_path / installer_filename
-    
-    # This implies that for custom installers, "package.zip" MUST exist on disk.
-    # My JsonDatabaseManager.get_file_path returns .../installer_file.
-    # If installer_file is the UPLOADED file (e.g. setup.exe), but we need to serve package.zip...
-    
-    # I should check if custom installer logic generates package.zip and stores it.
-    # If so, does installer_file point to package.zip?
-    # In models.py: "The uploaded installer file name is stored in installer_file; the generated package.zip ... is what WinGet will download"
-    
-    # So for custom, the file on disk to serve is package.zip.
-    # But installer_file points to the original.
-    # The old code just hardcoded filename="package.zip".
-    
-    target_filename = target_version.installer_file
-    served_path = file_path
-    
-    if target_version.installer_type == "custom":
-        target_filename = "package.zip"
-        # Assuming package.zip is in the same directory
-        served_path = file_path.parent / "package.zip"
-        
     if not served_path.is_file():
         raise HTTPException(status_code=404, detail="Installer file not found on disk")
-
+    
     return FileResponse(
         path=str(served_path),
-        filename=target_filename,
+        filename=served_path.name,
         media_type="application/octet-stream",
     )
