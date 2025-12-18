@@ -167,16 +167,16 @@
         <thead>
           <tr>
             <th>Action</th>
-            <th>Argument 1</th>
-            <th>Argument 2</th>
+            <th colspan="10">Arguments</th>
           </tr>
         </thead>
         <tbody id="custom-steps-tbody">
           {% if version_meta and version_meta.custom_installer_steps %}
             {% for step in version_meta.custom_installer_steps %}
-            <tr>
+            {% set step_args = step.arguments if step.arguments else {} %}
+            <tr data-step-index="{{ loop.index0 }}">
               <td>
-                <select name="custom_action_type">
+                <select name="custom_action_type" class="custom-action-select">
                   <option value="">(Select action)</option>
                   {% for action in custom_actions %}
                   <option
@@ -188,45 +188,50 @@
                   {% endfor %}
                 </select>
               </td>
-              <td>
-                <input
-                  type="text"
-                  name="custom_arg1"
-                  value="{{ step.argument1 or '' }}"
-                />
-              </td>
-              <td>
-                <input
-                  type="text"
-                  name="custom_arg2"
-                  value="{{ step.argument2 or '' }}"
-                />
+              <td class="custom-args-container">
+                {% for action in custom_actions %}
+                  {% if step.action_type == action.id and action.arguments %}
+                    {% for arg_def in action.arguments %}
+                      {% if arg_def.visible != false %}
+                      {% set arg_value = '' %}
+                      {% if arg_def.name in step_args %}
+                        {% set arg_value = step_args[arg_def.name] %}
+                      {% endif %}
+                      <div class="custom-arg-field" data-arg-name="{{ arg_def.name }}" style="display: block;">
+                        <label style="display: block; margin-bottom: 4px; font-size: 0.9em;">
+                          {{ arg_def.label or arg_def.name }}
+                          {% if arg_def.required %}<span class="required">*</span>{% endif %}
+                        </label>
+                        <input
+                          type="text"
+                          class="custom-arg-input"
+                          data-arg-name="{{ arg_def.name }}"
+                          placeholder="{{ arg_def.placeholder or '' }}"
+                          title="{{ arg_def.description or '' }}"
+                          value="{{ arg_value }}"
+                          {% if arg_def.required %}data-required="true"{% endif %}
+                        />
+                      </div>
+                      {% endif %}
+                    {% endfor %}
+                  {% endif %}
+                {% endfor %}
+                <input type="hidden" name="custom_args_json" class="custom-args-json" value="{{ step_args | tojson }}" />
               </td>
             </tr>
             {% endfor %}
           {% endif %}
-          <tr>
+          <tr data-step-index="new">
             <td>
-              <select name="custom_action_type">
+              <select name="custom_action_type" class="custom-action-select">
                 <option value="">(Select action)</option>
                 {% for action in custom_actions %}
                 <option value="{{ action.id }}">{{ action.label }}</option>
                 {% endfor %}
               </select>
             </td>
-            <td>
-              <input
-                type="text"
-                name="custom_arg1"
-                value=""
-              />
-            </td>
-            <td>
-              <input
-                type="text"
-                name="custom_arg2"
-                value=""
-              />
+            <td class="custom-args-container">
+              <input type="hidden" name="custom_args_json" class="custom-args-json" value="" />
             </td>
           </tr>
         </tbody>
@@ -234,6 +239,9 @@
       <small>The server will generate an <code>install.bat</code> from these steps and package it together with the uploaded installer into a ZIP that WinGet downloads.</small>
     </div>
   </div>
+  <script type="application/json" data-custom-actions>
+    {{ custom_actions | tojson }}
+  </script>
 
   <div class="modal-form-group">
     <label for="silent_arguments">

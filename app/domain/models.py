@@ -13,7 +13,7 @@ All models use Pydantic for validation, serialization, and type safety.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Optional, Literal
+from typing import Dict, List, Optional, Literal, Any
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -357,13 +357,9 @@ class CustomInstallerStep(BaseModel):
     action_type: str = Field(
         description="Type of action to perform (e.g., 'extract', 'run', 'copy').",
     )
-    argument1: Optional[str] = Field(
+    arguments: Optional[Dict[str, str]] = Field(
         default=None,
-        description="First argument for the action (context-dependent).",
-    )
-    argument2: Optional[str] = Field(
-        default=None,
-        description="Second argument for the action (context-dependent).",
+        description="Dynamic arguments dictionary mapping argument names to values (e.g., {'arg1': 'value1', 'arg2': 'value2'}).",
     )
 
 

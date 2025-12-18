@@ -3,7 +3,7 @@ Admin API endpoints for managing packages, versions, and cached packages.
 
 This module provides the administrative interface for:
 - Creating and editing packages and versions
-- Managing cached packages from the WinGet index
+    - Managing cached packages from the upstream repository index
 - Importing packages from upstream WinGet repository
 - Managing custom installers with package.zip generation
 """
@@ -18,6 +18,7 @@ import zipfile
 import tempfile
 import shutil
 import uuid
+import json
 
 from fastapi import (
     APIRouter,
@@ -239,9 +240,9 @@ async def admin_list_packages(
     
     Shows two separate lists:
     - Owned packages: Packages created/edited directly in this repository
-    - Cached packages: Packages imported from the WinGet index with caching enabled
+    - Cached packages: Packages imported from the upstream repository index with caching enabled
     
-    Also displays the last time the WinGet index was updated.
+    Also displays the last time the upstream repository index was updated.
     
     Args:
         request: FastAPI request object.
@@ -636,8 +637,7 @@ async def admin_save_version(
     nested_relative_file_path: List[str] = Form(default=[]),
     nested_portable_command_alias: List[str] = Form(default=[]),
     custom_action_type: List[str] = Form(default=[]),
-    custom_arg1: List[str] = Form(default=[]),
-    custom_arg2: List[str] = Form(default=[]),
+    custom_args_json: List[str] = Form(default=[]),
     install_mode_interactive: bool = Form(True),
     install_mode_silent: bool = Form(True),
     install_mode_silent_with_progress: bool = Form(True),
@@ -668,8 +668,7 @@ async def admin_save_version(
         nested_relative_file_path: For ZIP installers, relative paths to nested files.
         nested_portable_command_alias: For portable ZIP installers, command aliases.
         custom_action_type: For custom installers, list of action types.
-        custom_arg1: For custom installers, first argument for each action.
-        custom_arg2: For custom installers, second argument for each action.
+        custom_args_json: For custom installers, JSON-encoded arguments dictionary for each action.
         install_mode_interactive: Whether interactive mode is supported.
         install_mode_silent: Whether silent mode is supported.
         install_mode_silent_with_progress: Whether silent with progress mode is supported.
@@ -720,9 +719,23 @@ async def admin_save_version(
         for idx, action in enumerate(custom_action_type):
             action = (action or "").strip()
             if not action: continue
-            arg1 = (custom_arg1[idx] if idx < len(custom_arg1) else "").strip()
-            arg2 = (custom_arg2[idx] if idx < len(custom_arg2) else "").strip()
-            custom_steps.append(CustomInstallerStep(action_type=action, argument1=arg1 or None, argument2=arg2 or None))
+            
+            # Parse JSON arguments
+            arguments_dict = {}
+            if idx < len(custom_args_json) and custom_args_json[idx] and custom_args_json[idx].strip():
+                try:
+                    parsed_args = json.loads(custom_args_json[idx])
+                    if isinstance(parsed_args, dict):
+                        # Filter out empty values
+                        arguments_dict = {k: v for k, v in parsed_args.items() if v and str(v).strip()}
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            # Create step with arguments dict (always set, even if empty)
+            custom_steps.append(CustomInstallerStep(
+                action_type=action,
+                arguments=arguments_dict
+            ))
 
     normalized_dependencies = [d.strip() for d in package_dependencies if d.strip()]
 
@@ -891,32 +904,32 @@ async def admin_delete_package(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/admin/winget-index/update")
-async def admin_update_winget_index(
+@router.post("/admin/cached-packages/update")
+async def admin_update_cached_packages(
     caching_service: CachingService = Depends(get_caching_service)
 ) -> JSONResponse:
     """
-    Update the cached WinGet index from the upstream repository.
+    Update all cached packages that have auto_update enabled.
     
-    Downloads the latest manifest index from the public WinGet repository
-    and caches it locally for package search and import operations.
+    Updates the upstream repository index and checks for new versions of all
+    cached packages, importing them if they match the package's filter settings.
     
     Args:
         caching_service: Caching service dependency.
         
     Returns:
-        JSON response with success status and index path, or error message.
+        JSON response with success status or error message.
     """
     try:
-        index_path = await caching_service.update_index()
+        await caching_service.update_cached_packages()
         return JSONResponse(
             status_code=200,
-            content={"success": True, "message": "Index updated successfully", "index_path": str(index_path)}
+            content={"success": True, "message": "Cached packages updated successfully"}
         )
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={"error": f"Failed to update index: {str(e)}"}
+            content={"error": f"Failed to update cached packages: {str(e)}"}
         )
 
 

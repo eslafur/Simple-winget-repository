@@ -263,33 +263,163 @@ window.onModalContentLoaded = function(modalBody) {
 
   function setupDynamicCustomRows(tbody) {
     if (!tbody) return;
+    
+    // Get actions metadata from script tag or window variable
+    let actionsMetadata = [];
+    const metadataScript = document.querySelector('script[data-custom-actions]');
+    if (metadataScript) {
+      try {
+        actionsMetadata = JSON.parse(metadataScript.textContent || metadataScript.innerHTML);
+      } catch (e) {
+        console.warn('Failed to parse custom actions metadata:', e);
+      }
+    } else if (window.customActionsMetadata) {
+      actionsMetadata = window.customActionsMetadata;
+    }
+
+    function getActionMetadata(actionId) {
+      return actionsMetadata.find(a => a.id === actionId) || null;
+    }
+
+    function updateArgumentFields(row, actionId, existingArgs) {
+      const argsContainer = row.querySelector('.custom-args-container');
+      if (!argsContainer) return;
+      
+      // Clear existing argument fields
+      const existingFields = argsContainer.querySelectorAll('.custom-arg-field');
+      existingFields.forEach(field => field.remove());
+      
+      const actionMeta = getActionMetadata(actionId);
+      if (!actionMeta || !actionMeta.arguments) {
+        // Hide all fields if no action selected or no arguments
+        const jsonInput = argsContainer.querySelector('.custom-args-json');
+        if (jsonInput) jsonInput.value = '';
+        return;
+      }
+      
+      // Create argument fields based on metadata
+      actionMeta.arguments.forEach(argDef => {
+        if (argDef.visible !== false) {
+          const fieldDiv = document.createElement('div');
+          fieldDiv.className = 'custom-arg-field';
+          fieldDiv.setAttribute('data-arg-name', argDef.name);
+          fieldDiv.style.display = 'block';
+          
+          const label = document.createElement('label');
+          label.textContent = argDef.label || argDef.name;
+          label.style.display = 'block';
+          label.style.marginBottom = '4px';
+          label.style.fontSize = '0.9em';
+          if (argDef.required) {
+            label.innerHTML += ' <span class="required">*</span>';
+          }
+          
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'custom-arg-input';
+          input.setAttribute('data-arg-name', argDef.name);
+          input.placeholder = argDef.placeholder || '';
+          input.title = argDef.description || '';
+          
+          // Populate with existing value if available
+          if (existingArgs && existingArgs[argDef.name]) {
+            input.value = existingArgs[argDef.name];
+          }
+          
+          if (argDef.required) {
+            input.setAttribute('data-required', 'true');
+          }
+          
+          fieldDiv.appendChild(label);
+          fieldDiv.appendChild(input);
+          
+          // Attach event listener to update JSON when input changes
+          input.addEventListener('input', () => updateArgumentsJson(row));
+          
+          // Insert before the hidden JSON input
+          const jsonInput = argsContainer.querySelector('.custom-args-json');
+          if (jsonInput) {
+            argsContainer.insertBefore(fieldDiv, jsonInput);
+          } else {
+            argsContainer.appendChild(fieldDiv);
+          }
+        }
+      });
+      
+      // Update JSON after populating fields
+      updateArgumentsJson(row);
+    }
+
+    function updateArgumentsJson(row) {
+      const argsContainer = row.querySelector('.custom-args-container');
+      if (!argsContainer) return;
+      
+      const jsonInput = argsContainer.querySelector('.custom-args-json');
+      if (!jsonInput) return;
+      
+      const select = row.querySelector('.custom-action-select');
+      const hasAction = select && select.value;
+      
+      const args = {};
+      const inputs = argsContainer.querySelectorAll('.custom-arg-input');
+      inputs.forEach(input => {
+        const value = input.value.trim();
+        if (value) {
+          args[input.getAttribute('data-arg-name')] = value;
+        }
+      });
+      
+      // Always send JSON object if an action is selected (even if empty)
+      // This allows backend to distinguish between "no data" and "empty arguments"
+      if (hasAction) {
+        jsonInput.value = JSON.stringify(args);
+      } else {
+        jsonInput.value = '';
+      }
+    }
 
     function createRow() {
       const tr = document.createElement('tr');
-      // Clone the structure of the last row to preserve action options.
-      const templateRow = tbody.querySelector('tr:last-child');
-      if (templateRow) {
-        tr.innerHTML = templateRow.innerHTML;
-        // Clear values in inputs and reset selects.
-        const select = tr.querySelector('select[name="custom_action_type"]');
-        if (select) {
-          select.value = '';
-        }
-        const inputs = tr.querySelectorAll('input[name="custom_arg1"], input[name="custom_arg2"]');
-        inputs.forEach((input) => {
-          input.value = '';
-        });
-      } else {
-        tr.innerHTML = `
-          <td>
-            <select name="custom_action_type">
-              <option value="">(Select action)</option>
-            </select>
-          </td>
-          <td><input type="text" name="custom_arg1" value=""></td>
-          <td><input type="text" name="custom_arg2" value=""></td>
-        `;
-      }
+      tr.setAttribute('data-step-index', 'new');
+      
+      const actionCell = document.createElement('td');
+      const select = document.createElement('select');
+      select.name = 'custom_action_type';
+      select.className = 'custom-action-select';
+      
+      const defaultOption = document.createElement('option');
+      defaultOption.value = '';
+      defaultOption.textContent = '(Select action)';
+      select.appendChild(defaultOption);
+      
+      actionsMetadata.forEach(action => {
+        const option = document.createElement('option');
+        option.value = action.id;
+        option.textContent = action.label;
+        select.appendChild(option);
+      });
+      
+      actionCell.appendChild(select);
+      
+      const argsCell = document.createElement('td');
+      argsCell.className = 'custom-args-container';
+      const jsonInput = document.createElement('input');
+      jsonInput.type = 'hidden';
+      jsonInput.name = 'custom_args_json';
+      jsonInput.className = 'custom-args-json';
+      jsonInput.value = '';
+      argsCell.appendChild(jsonInput);
+      
+      tr.appendChild(actionCell);
+      tr.appendChild(argsCell);
+      
+      // Set up event handlers
+      select.addEventListener('change', () => {
+        updateArgumentFields(tr, select.value, null);
+      });
+      
+      // Note: Input event listeners are attached in updateArgumentFields when fields are created
+      
       return tr;
     }
 
@@ -303,9 +433,9 @@ window.onModalContentLoaded = function(modalBody) {
       // Remove completely empty rows except for the last one.
       for (let i = 0; i < rows.length - 1; i++) {
         const select = rows[i].querySelector('select[name="custom_action_type"]');
-        const inputs = rows[i].querySelectorAll('input[name="custom_arg1"], input[name="custom_arg2"]');
+        const jsonInput = rows[i].querySelector('.custom-args-json');
         const hasAction = select && select.value;
-        const hasArgs = Array.from(inputs).some((input) => input.value.trim());
+        const hasArgs = jsonInput && jsonInput.value && jsonInput.value.trim();
         if (!hasAction && !hasArgs) {
           tbody.removeChild(rows[i]);
         }
@@ -314,13 +444,58 @@ window.onModalContentLoaded = function(modalBody) {
       rows = Array.from(tbody.querySelectorAll('tr'));
       const last = rows[rows.length - 1];
       const lastSelect = last.querySelector('select[name="custom_action_type"]');
-      const lastInputs = last.querySelectorAll('input[name="custom_arg1"], input[name="custom_arg2"]');
+      const lastJsonInput = last.querySelector('.custom-args-json');
       const hasAction = lastSelect && lastSelect.value;
-      const hasArgs = Array.from(lastInputs).some((input) => input.value.trim());
+      const hasArgs = lastJsonInput && lastJsonInput.value && lastJsonInput.value.trim();
       if (hasAction || hasArgs) {
         tbody.appendChild(createRow());
       }
     }
+
+    // Initialize existing rows
+    const existingRows = Array.from(tbody.querySelectorAll('tr'));
+    existingRows.forEach(row => {
+      const select = row.querySelector('.custom-action-select');
+      const jsonInput = row.querySelector('.custom-args-json');
+      const argsContainer = row.querySelector('.custom-args-container');
+      
+      if (select) {
+        select.addEventListener('change', () => {
+          updateArgumentFields(row, select.value, null);
+        });
+        
+        // Check if fields already exist (server-side rendered)
+        const existingFields = argsContainer ? argsContainer.querySelectorAll('.custom-arg-field') : [];
+        
+        if (existingFields.length > 0) {
+          // Fields already exist from server-side rendering, just attach listeners
+          const argInputs = argsContainer.querySelectorAll('.custom-arg-input');
+          argInputs.forEach(input => {
+            // Check if listener already exists to avoid duplicates
+            if (!input.hasAttribute('data-listener-attached')) {
+              input.setAttribute('data-listener-attached', 'true');
+              input.addEventListener('input', () => updateArgumentsJson(row));
+            }
+          });
+          // Ensure JSON is up to date with current field values
+          updateArgumentsJson(row);
+        } else if (select.value) {
+          // No fields exist yet, create them (for dynamically added rows)
+          // Parse existing JSON to populate fields
+          let existingArgs = null;
+          if (jsonInput && jsonInput.value && jsonInput.value.trim()) {
+            try {
+              existingArgs = JSON.parse(jsonInput.value);
+            } catch (e) {
+              console.warn('Failed to parse custom args JSON:', e);
+            }
+          }
+          
+          // Update fields with existing arguments
+          updateArgumentFields(row, select.value, existingArgs);
+        }
+      }
+    });
 
     tbody.addEventListener('input', refresh);
     tbody.addEventListener('change', refresh);

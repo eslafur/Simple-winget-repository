@@ -36,16 +36,6 @@
 
 <section>
   <h2>
-    WinGet Index Status
-  </h2>
-  <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-    <span>WinGet index last pulled: <strong>{{ index_last_pulled or "never" }}</strong></span>
-    <button onclick="updateWingetIndex()" class="button-secondary" title="Update WinGet index">Update Index</button>
-  </div>
-</section>
-
-<section>
-  <h2>
     Cached WinGet Packages
     <button onclick="openNewCachedPackageModal()" class="button-add" title="Add cached package">+</button>
   </h2>
@@ -88,6 +78,16 @@
   </table>
 </section>
 
+<section>
+  <h2>
+    Upstream Repository Index Status
+  </h2>
+  <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+    <span>Upstream repository index last pulled: <strong>{{ index_last_pulled or "never" }}</strong></span>
+    <button onclick="updateCachedPackages()" class="button-secondary" title="Check for new versions and update index">Check for Updates</button>
+  </div>
+</section>
+
 {% include "modal.html" %}
 
 <script>
@@ -109,28 +109,28 @@ function openNewCachedPackageModal() {
   );
 }
 
-async function updateWingetIndex() {
-  if (!confirm('This will download the latest WinGet index. This may take a few minutes. Continue?')) {
+async function updateCachedPackages() {
+  if (!confirm('This will update the upstream repository index and check for new versions of all cached packages. This may take a few minutes. Continue?')) {
     return;
   }
   
   const button = event.target;
   const originalText = button.textContent;
   button.disabled = true;
-  button.textContent = 'Updating...';
+  button.textContent = 'Checking...';
   
   try {
-    const response = await fetch('/admin/winget-index/update', {
+    const response = await fetch('/admin/cached-packages/update', {
       method: 'POST',
     });
     
     const data = await response.json();
     
     if (data.success) {
-      alert('Index updated successfully!');
+      alert('Cached packages updated successfully!');
       location.reload();
     } else {
-      alert('Error: ' + (data.error || 'Failed to update index'));
+      alert('Error: ' + (data.error || 'Failed to update cached packages'));
       button.disabled = false;
       button.textContent = originalText;
     }

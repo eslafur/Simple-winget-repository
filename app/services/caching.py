@@ -1,8 +1,8 @@
 """
-Unified caching service for managing the upstream WinGet repository index and importing packages.
+Unified caching service for managing the upstream repository index and importing packages.
 
 This service handles:
-- Downloading and updating the WinGet index database
+- Downloading and updating the upstream repository index database
 - Querying the index for packages and versions
 - Downloading manifests and installers
 - Importing packages into the local repository
@@ -60,7 +60,7 @@ class CachingService:
         self.cache_dir = self.data_dir / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.index_path = self.cache_dir  / "index.db"
-        self.status_path = self.cache_dir / "winget_index_status.json"
+        self.status_path = self.cache_dir / "upstream_repository_index_status.json"
     
     # ========================================================================
     # Index Management
@@ -82,7 +82,7 @@ class CachingService:
         self.status_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     
     def get_index_status(self) -> Dict[str, Any]:
-        """Get the status of the WinGet index."""
+        """Get the status of the upstream repository index."""
         last_pulled = None
         if self.status_path.exists():
             try:
@@ -107,7 +107,7 @@ class CachingService:
     
     async def update_index(self) -> Path:
         """
-        Download and extract the WinGet index database.
+        Download and extract the upstream repository index database.
         
         Returns:
             Path to the extracted index.db file
@@ -264,7 +264,7 @@ class CachingService:
             conn.close()
     
     def search_upstream_packages(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Search for packages in the upstream WinGet index."""
+        """Search for packages in the upstream repository index."""
         if not self.index_path.exists():
             return []
             
@@ -856,7 +856,7 @@ class CachingService:
         logger.info(f"Importing package: {package_id}")
         
         if not self.index_path.exists():
-            raise FileNotFoundError("WinGet index not found. Please run update_index() first.")
+            raise FileNotFoundError("Upstream repository index not found. Please run update_index() first.")
         
         package_info = self.find_package_by_id(package_id)
         if not package_info:
@@ -924,7 +924,11 @@ class CachingService:
     # ========================================================================
     
     async def update_cached_packages(self):
-        """Update all cached packages that have auto_update enabled."""
+        """Update all cached packages that have auto_update enabled.
+        
+        Updates the upstream repository index first, then checks for new versions
+        of all cached packages and imports them if they match the package's filter settings.
+        """
         logger.info("Starting cached packages update")
         
         # Ensure index exists
@@ -932,7 +936,7 @@ class CachingService:
             try:
                 await self.update_index()
             except Exception:
-                logger.error("No local WinGet index available. Aborting update.")
+                logger.error("No local upstream repository index available. Aborting update.")
                 return
         else:
             # Always try to update index first in the daily loop
